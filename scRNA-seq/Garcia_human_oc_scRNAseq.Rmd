@@ -1,0 +1,481 @@
+---
+title: "Garcia human OC scRNA-seq Analysis"
+output: html_notebook
+---
+
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+library(pheatmap)
+library(harmony)
+library(msigdbr)
+#library(CellChat)
+#library(infercnv)
+library(progeny)
+library(readxl)
+library(ggrepel)
+library(lme4)
+library(lmerTest)
+library(MuMIn)
+set.seed(10)
+```
+
+```{r}
+tcells <- readRDS("~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/T.super_processed_filtered_annotated_release.rds")
+tcells
+head(tcells)
+```
+```{r}
+t_sub <- tcells[,sample(colnames(tcells),size=10000,replace=F)]
+saveRDS(t_sub,"~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/T.subsample.rds")
+```
+
+```{r}
+t_sub <- readRDS("~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/T.subsample.rds")
+FeaturePlot(t_sub, features=c("CD8A","CD3E","CD4","FOXP3"),reduction="umapharmony")
+#DimPlot(tcells, reduction="umapharmony",raster=T)
+DimPlot_scCustom(t_sub,colors_use = DiscretePalette_scCustomize(num_colors=41, palette="varibow",shuffle_pal=T), reduction="umapharmony")
+```
+
+2. Ovarian cancer
+```{r}
+oc <- readRDS("~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/Ovarian.cancer.super_processed_filtered_annotated_release.rds")
+oc
+head(oc)
+rownames(oc@meta.data) <- oc@meta.data$cell_id
+```
+```{r}
+oc_sub <- oc[,sample(colnames(oc),size=10000,replace=F)]
+saveRDS(oc_sub,"~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/OC.subsample.rds")
+oc_sub <- readRDS("~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/RNA_seq/Garcia_human_oc_scRNAseq/OC.subsample.rds")
+```
+
+```{r}
+oc_sub <- readRDS("~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/OC.subsample.rds")
+table(oc_sub[[c("seurat_clusters","cluster_label")]])
+p1 <- DimPlot(oc_sub,reduction="umapharmony",raster=F,label=T)+NoLegend()
+p2 <- DimPlot(oc_sub,reduction="umapharmony",group.by="patient_id")+NoLegend()
+DimPlot(oc_sub,reduction="umapharmony",group.by="tumor_supersite")
+p1+p2
+FeaturePlot(oc_sub, features=c("PAX8","EPCAM","NT5E","ESR1","S100A4","COL1A1","MKI67","CXCL10","MFAP4"), reduction="umapharmony")
+```
+```{r}
+oc.markers <- FindAllMarkers(oc_sub, only.pos = T, min.pct = 0.25, logfc.threshold = 0.25)
+top10 <- oc.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 10, order_by = avg_log2FC)
+DoHeatmap(oc_sub, features=top10$gene)+NoLegend()
+write.table(top10, "~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/OC.markers.txt", sep="\t")
+```
+```{r}
+FeaturePlot(oc_sub, features=c("G2M.Score","Hypoxia.pathway","Estrogen.pathway","EGFR.pathway","JAK.STAT.pathway","NFkB.pathway","TGFb.pathway","TNFa.pathway","p53.pathway"),reduction="umapharmony")
+```
+
+3. EMT pathway score
+
+```{r}
+# Plot oc_sub EMT gene expression. Averaged by tissue site or single-cell resolution
+emt.markers <- read_excel("~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/RNA_seq/Lyer_scRNA_seq/EMT markers AG edits.xlsx")
+epi.markers <- emt.markers$`Epithelial markers`[1:16]
+mes.markers <- c(emt.markers$`Mesenchymal markers`[1:39],"CEBPB")
+# Get cluster average
+oc.cluster.avg <- AggregateExpression(oc_sub,return.seurat = T)
+mes.markers <- c("VIM","FN1","SNAI1","SNAI2","ZEB1","ZEB2","TWIST1","TWIST2","CD44","ITGB6","ITGAV","ITGB3","FOXC1","TGFB1","TNC","LAMC2","PAHA2","LAMA3","LAMB3","RELA","CEBPB")
+new.cluster.ids <- c(0,1,2,3,4,5,6,7,8,16) # Example
+names(new.cluster.ids) <- levels(oc.cluster.avg)
+oc.cluster.avg <- RenameIdents(oc.cluster.avg,new.cluster.ids)
+levels(oc.cluster.avg) <- c(1,3,5,6,0,2,4,7,8,16)
+DoHeatmap(oc.cluster.avg, mes.markers, size=4, draw.lines=FALSE) + scale_fill_gradientn(colors = c("darkblue","white","red")) + guides(color=FALSE)
+```
+```{r}
+oc_sub <- AddModuleScore(oc_sub, features=list(mes.markers),ctrl=10,name="Mesenchymal",seed=10)
+oc_sub <- AddModuleScore(oc_sub, features=list(epi.markers),ctrl=10,name="Epithelial",seed=10)
+oc_sub$EMT <- (oc_sub$Mesenchymal1-mean(oc_sub$Mesenchymal1))/sd(oc_sub$Mesenchymal1)-(oc_sub$Epithelial1-mean(oc_sub$Epithelial1))/sd(oc_sub$Epithelial1)
+hist(oc_sub$Mesenchymal1,breaks=40)
+hist(oc_sub$Epithelial1,breaks=40)
+head(oc_sub,30)
+```
+```{r}
+head(oc_sub)
+pathways <- colnames(oc_sub@meta.data)[c(35:49,52:54)]
+progeny_df <- t(as.data.frame(oc_sub@meta.data[pathways]))
+progeny_assay <- CreateAssayObject(counts=progeny_df)
+oc_sub[["progeny"]] <- progeny_assay
+```
+
+
+```{r}
+human_gene_sets = msigdbr(species = "Homo sapiens")
+head(human_gene_sets) # Look at data structure
+msigdbr_collections() # What gene sets are there?
+human_emt <- human_gene_sets %>% dplyr::filter(gs_cat == "H" & gs_name == "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION") # Hallmark sets
+emt.genes <- human_emt$gene_symbol
+```
+
+```{r}
+oc.counts <- GetAssayData(object=oc, slot="counts")
+scoresAndIndices <- getPathwayScores(oc.counts, emt.genes)
+emt.cellscores <- scoresAndIndices$pathwayScores
+oc$EMT.score <- emt.cellscores
+hist(log(emt.cellscores))
+```
+4. Which bulk RNA-seq immune-related genes are detected in human ovarian cancer scRNA-seq
+```{r}
+# Identify genes that are well expressed in cancer
+ovarian.counts <- as.data.frame(oc_sub@assays$RNA@counts)
+ovarian.counts$expression <- rowMeans(ovarian.counts)
+
+hist(log10(ovarian.counts$expression), breaks=100)
+gene_50 <- rownames(ovarian.counts[ovarian.counts$expression>quantile(ovarian.counts$expression,0.5),])
+gene_70 <- rownames(ovarian.counts[ovarian.counts$expression>quantile(ovarian.counts$expression,0.7),])
+```
+```{r}
+bppnm_immune_50 <- BPPNM_genes[BPPNM_genes$HS %in% gene_50, ]
+bppnm_immune_70 <- BPPNM_genes[BPPNM_genes$HS %in% gene_70, ]
+ppnm_immune_50 <- PPNM_genes[PPNM_genes$HS %in% gene_50, ]
+ppnm_immune_70 <- PPNM_genes[PPNM_genes$HS %in% gene_70, ]
+
+invivo_sc_immune <- list("BPPNM_immune_Human_50th"=bppnm_immune_50,"PPNM_immune_Human_50th"=ppnm_immune_50, "BPPNM_immune_Human_70th"=bppnm_immune_70,"PPNM_immune_Human_70th"=ppnm_immune_70)
+write.xlsx(invivo_sc_immune, file.path(dir,"Analysis/DE_invivo_bulk_vs_human_scRNA_Garcia_immune.xlsx"), rowNames=T)
+```
+
+5. Export data for cell trajectory analysis
+```{r}
+out_dir <- "~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq"
+oc_sub$UMAP_1 <- oc_sub@reductions$umapharmony@cell.embeddings[,1]
+oc_sub$UMAP_2 <- oc_sub@reductions$umapharmony@cell.embeddings[,2]
+oc_sub$barcode <- gsub(".*\\-","",colnames(oc_sub))
+write.table(oc_sub@meta.data, file=file.path(out_dir, "oc_sub.metadata.csv"),quote=F, row.names=F,sep="\t")
+```
+
+```{r}
+# Write expression counts matrix
+library(Matrix)
+counts_matrix <- GetAssayData(oc_sub, assay="RNA",slot='counts')
+writeMM(counts_matrix, file=file.path(out_dir, 'oc_sub.counts.mtx'))
+write.csv(oc_sub@reductions$pca@cell.embeddings,file=file.path(out_dir, 'oc_sub.pca.csv'))
+write.table(data.frame('gene'=rownames(counts_matrix)), file=file.path(out_dir,'oc_sub.gene_names.csv'), quote=F, row.names=F, col.names=F)
+```
+
+6. Average expression by sample
+```{r}
+head(oc_sub)
+```
+
+```{r}
+# Add normalized EMT.score, move Pathway scores from meta.data to assay for easier normalization
+hist(log(oc_sub$EMT.score))
+oc_sub$EMT.score <- log(oc_sub$EMT.score) - mean(log(oc_sub$EMT.score))
+pathways <- colnames(oc_sub@meta.data)[35:49]
+progeny_df <- t(as.data.frame(oc_sub@meta.data[pathways]))
+progeny_assay <- CreateAssayObject(counts=progeny_df)
+oc_sub[["progeny"]] <- progeny_assay
+```
+```{r}
+oc_avg <- AverageExpression(oc_sub, return.seurat=T, group.by="spectrum_sample_id")
+saveRDS(oc_avg, "~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/oc_sub.average.rds")
+```
+```{r}
+FeaturePlot(oc_sub, features="EMT",reduction="umapharmony",min.cutoff=-0.3,max.cutoff=1)+scale_color_gradientn(colors = c("dark blue","white","red"))
+# Add Epi and Mes scores
+t.avg.pathways$Mesenchymal <- progeny_scores_df[match(rownames(t.avg.pathways),rownames(progeny_scores_df)),]$Mesenchymal1
+t.avg.pathways$Epithelial <- progeny_scores_df[match(rownames(t.avg.pathways),rownames(progeny_scores_df)),]$Epithelial1
+t.avg.pathways$EMT <- progeny_scores_df[match(rownames(t.avg.pathways),rownames(progeny_scores_df)),]$EMT
+```
+Question 1: Is EMT correlated with tissue site? Within or across patients?
+- Statistical test: one-way ANOVA, or 2-way ANOVA or linear models
+- P-value=0.307. However, EMT score correlates with patient_id, need to normalize
+```{r}
+oc_avg <- readRDS("~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/oc_sub.average.rds")
+# Use sample ID to get tissue site and add to oc_avg metadata
+oc_sub_df <- as.data.frame(oc_sub@meta.data)
+sample_site <- oc_sub_df[c("spectrum_sample_id","tumor_supersite")]
+oc_avg$tumor_supersite <- sample_site[match(colnames(oc_avg),sample_site$spectrum_sample_id),]$tumor_supersite
+# Move Pathway scores to metadata
+progeny_scores_df <- as.data.frame(t(GetAssayData(oc_avg, slot="data",assay = "progeny")))
+oc_avg <- AddMetaData(oc_avg, progeny_scores_df, col.name=colnames(progeny_scores_df))
+# 1-way ANOVA EMT vs tumor_supersite
+emt.aov <- aov(EMT.score ~ tumor_supersite, data=oc_avg@meta.data)
+summary(emt.aov)
+```
+Now, let's test whether EMT.scores, centered across each patient, is correlated with tumor site.
+```{r}
+# Center EMT.score across each patient
+colnames(oc_avg@meta.data)[1] <- "patient_id"
+oc_avg_df <- as.data.frame(oc_avg@meta.data)
+emt_mean <- oc_avg_df %>%
+  group_by(patient_id) %>%
+  summarise_at(vars(EMT.score), list(EMT.mean = mean))
+oc_avg_df$EMT.mean <- emt_mean[match(oc_avg_df$patient_id,emt_mean$patient_id),]$EMT.mean
+oc_avg$centered.EMT <- oc_avg_df$EMT.score-oc_avg_df$EMT.mean
+emt.centered.aov <- aov(centered.EMT ~ tumor_supersite, data=oc_avg@meta.data)
+summary(emt.centered.aov)
+```
+Linear model: EMT ~ tumor_site, patient_id
+```{r}
+lm_emt <- lm(formula = EMT.score ~ tumor_supersite + patient_id, data=oc_avg@meta.data)
+summary(lm_emt)
+# Make boxplot for visualization
+ggboxplot(oc_avg@meta.data, x="tumor_supersite",y="EMT.score", color="tumor_supersite",add="jitter",palette="Set2") +
+  theme(axis.text.x=element_text(angle=45, vjust=0.5,hjust=0.5))
+```
+
+7. T cell data
+```{r}
+tcells <- readRDS("~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/T.super_processed_filtered_annotated_release.rds")
+tcells
+head(tcells)
+rownames(tcells@meta.data) <- tcells@meta.data$cell_id
+# Subset T cells
+t_sub <- tcells[,sample(colnames(tcells),size=50000,replace=F)]
+saveRDS(t_sub,"C:/Users/William Mitchell/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/T.subsample.rds")
+```
+
+```{r}
+t_sub <- readRDS("C:/Users/William Mitchell/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/T.subsample.rds")
+DimPlot(t_sub,reduction="umapharmony",label=T,repel=T)+NoLegend()
+```
+Caculate t cell percentage of total t cells per sample.
+```{r}
+sample_cluster_sub<- as.data.frame.matrix(table(tcells$spectrum_sample_id,tcells$cluster_label_sub))
+t.cluster_sub.frac <- sample_cluster_sub/rowSums(sample_cluster_sub)
+sample_cluster<- as.data.frame.matrix(table(tcells$spectrum_sample_id,tcells$cluster_label))
+t.cluster.frac <- sample_cluster/rowSums(sample_cluster)
+```
+```{r}
+oc_avg_df <- as.data.frame(oc_avg@meta.data)
+write.table(oc_avg_df,"C:/Users/William Mitchell/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/OC_avg_df.txt", sep="\t")
+# Calculate correlation between sample EMT.score and t.cluster.frac
+add_emt <- function(t.cluster_sub.frac, oc_avg_df){
+  t.cluster_sub.subset <- t.cluster_sub.frac[rownames(t.cluster_sub.frac) %in% rownames(oc_avg_df),]
+  t.cluster_sub.subset$EMT.score <- oc_avg_df[match(rownames(t.cluster_sub.subset),rownames(oc_avg_df)),]$EMT.score
+  t.cluster_sub.subset$EMT.centered <- oc_avg_df[match(rownames(t.cluster_sub.subset),rownames(oc_avg_df)),]$centered.EMT
+  t.cluster_sub.subset$tumor_supersite <- oc_avg_df[match(rownames(t.cluster_sub.subset),rownames(oc_avg_df)),]$tumor_supersite
+  return(t.cluster_sub.subset)
+}
+t.cluster_sub.subset <- add_emt(t.cluster_sub.frac, oc_avg_df)
+t.cluster.subset <- add_emt(t.cluster.frac, oc_avg_df)
+```
+```{r}
+
+lm_emt.tcluster <- lm(formula= EMT.score ~.,data=t.cluster.subset)
+summary(lm_emt.tcluster)
+```
+```{r}
+lm_emt.tsub <- lm(formula= EMT.score ~.,data=t.cluster_sub.subset)
+summary(lm_emt.tsub)
+```
+
+Now, let's plot Linear Model results of EMT vs. T cell subset infiltration
+```{r}
+plot_lm <- function(lm_emt.tcluster){
+lm_emt.tcluster_df <- as.data.frame.matrix(summary(lm_emt.tcluster)$coef)
+colnames(lm_emt.tcluster_df)[4] <- "p_value"
+lm_emt.tcluster_df$label <- rownames(lm_emt.tcluster_df)
+# Add labels and axes
+ggplot(lm_emt.tcluster_df, aes(x=Estimate, y=(-log10(p_value)), label=label))+
+  geom_point()+geom_text_repel(max.overlaps=20)+
+  geom_hline(yintercept=-log10(0.05),linetype=2,color="blue")+
+  geom_vline(xintercept=0)+ geom_hline(yintercept=0)+
+  labs(x="Coefficient",title="EMT ~ t_subcluster% + tumor_supersite")+
+  theme(plot.title=element_text(hjust=0.5,size=15))
+}
+plot_lm(lm_emt.tsub)
+```
+8. EMT.score vs. T cell Pathway scores
+```{r}
+head(tcells)
+pathways <- colnames(tcells@meta.data)[39:52]
+progeny_df <- t(as.data.frame(tcells@meta.data[pathways]))
+progeny_assay <- CreateAssayObject(counts=progeny_df)
+tcells[["progeny"]] <- progeny_assay
+```
+
+```{r}
+t.avg <- AverageExpression(tcells, group.by="spectrum_sample_id", return.seurat=T)
+# Get Pathway dataframe, which is independent variable?
+t.avg.progeny <- as.data.frame(t(t.avg@assays$progeny@data))
+t.avg_df <- as.data.frame(t.avg@meta.data)
+t.avg.progeny$patient_id <- t.avg_df[match(rownames(t.avg.progeny),rownames(t.avg_df)),]$orig.ident
+t.avg.pathways <- add_emt(t.avg.progeny, oc_avg_df)
+write.table(t.avg.pathways,"~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/t_avg_pathways.txt", sep="\t")
+t.avg.pathways <- read.table("~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/t_avg_pathways.txt", sep="\t")
+```
+
+```{r}
+pathway_correlation<-function(t.avg.pathways,pathways){
+out <- vector('list', length(pathways))
+coef <- vector(length=length(pathways))
+p_value <- vector(length=length(pathways))
+r_squared <- vector(length=length(pathways))
+for(i in 1:length(pathways)){
+  #plot(t.avg.pathways$Epithelial,t.avg.pathways[[pathways[i]]],ylab=pathways[i])
+  out[[i]] <- lm(paste(pathways[i],  '~', "EMT"),data=t.avg.pathways)
+  print(summary(out[[i]]))
+  coef[i] <- summary(out[[i]])$coef[2,1]
+  p_value[i] <- summary(out[[i]])$coef[2,4]
+  r_squared[i] <- summary(out[[i]])$r.squared
+  res <- resid(out[[i]])
+  #plot(fitted(out[[i]]),res,xlab=pathways[i],ylab="residuals")
+  #abline(0,0)
+}
+emt.tpathways <- data.frame(coef, p_value,r_squared, pathways)
+
+p1 <- ggplot(emt.tpathways, aes(x=coef, y=r_squared, label=pathways))+
+  geom_point()+geom_text_repel(max.overlaps=20)+
+  #geom_hline(yintercept=-log10(0.05),linetype=2,color="blue")+
+  geom_vline(xintercept=0)+ geom_hline(yintercept=0)+
+  #xlim(c(-0.4,0.25))+
+  labs(x="Coefficient",title="Tcell_Progeny_Pathways ~ Tumor_EMT_score")+
+  theme(plot.title=element_text(hjust=0.5,size=15))
+print(p1)
+return(emt.tpathways)
+}
+emt.tpathways<- pathway_correlation(t.avg.pathways, pathways[1:14])
+```
+
+```{r}
+# What pathways is EMT correlated with in a tumor?
+oc.pathways <- add_emt(as.data.frame(t(oc_avg@assays$progeny@data)),oc_avg_df)
+oc.pathway_corr <- pathway_correlation(oc.pathways)
+```
+```{r}
+ggplot(t.avg.pathways, aes(x=Epithelial, y=JAK.STAT.pathway))+geom_point()+labs(title=paste(paste("p=",round(sp1$p.value,5)),paste("Spearman_r=",round(sp1$estimate,5)),sep=", "))+theme(plot.title=element_text(hjust=0.5))
+sp <- cor.test(t.avg.pathways$Mesenchymal, t.avg.pathways$JAK.STAT.pathway, method = "spearman")
+```
+```{r}
+ggplot(t.avg.pathways, aes(x=Epithelial, y=JAK.STAT.pathway))+geom_point()
+sp1 <- cor.test(t.avg.pathways$Epithelial, t.avg.pathways$JAK.STAT.pathway, method = "spearman")
+```
+
+```{r}
+# Add patient_id as covariate using Linear-Mixed-Effects Model
+pathways <- pathways[1:14]
+out <- vector('list', length(pathways))
+coef <- vector(length=length(pathways))
+t_value <- vector(length=length(pathways))
+p_Satt <- vector(length=length(pathways))
+r2m <- vector(length=length(pathways))
+r2c <- vector(length=length(pathways))
+for(i in 1:length(pathways)){
+  out[[i]] <- lmer(paste(pathways[i],  '~', "Mesenchymal + (1|patient_id)"),data=t.avg.pathways)
+  coef[i] <- summary(out[[i]])$coef[2,1]
+  t_value[i] <- summary(out[[i]])$coef[2,4]
+  p_Satt[i] <- summary(out[[i]])$coef[2,5]
+  r2m[i] <- r.squaredGLMM(out[[i]])[1,1]
+  r2c[i] <- r.squaredGLMM(out[[i]])[1,2]
+}
+emt.tpathways <- data.frame(coef, t_value,p_Satt,r2m,r2c,pathways)
+p1 <- ggplot(emt.tpathways, aes(x=coef, y=r2c, label=pathways))+
+  geom_point()+geom_text_repel(max.overlaps=20)+
+  #geom_hline(yintercept=-log10(0.05),linetype=2,color="blue")+
+  geom_vline(xintercept=0)+ geom_hline(yintercept=0)+
+  labs(x="Coefficient",title="Tcell_Progeny_Pathways ~ Tumor_Mesenchymal_score+Patient_id")+
+  theme(plot.title=element_text(hjust=0.5,size=15))
+print(p1)
+```
+
+9. Identify Novel EMT related, surface/secreted proteins from mouse bulk and human scRNA-seq data
+```{r}
+dir <- "~/Dropbox (Partners HealthCare)/BPPNM_PPNM_invivo_RNAseq"
+BPPNM_immune <- read.xlsx(file.path(dir,"Analysis/DE_invivo_bulk_vs_scRNA_Lyer_immune.xlsx"),sheet="BPPNM_immune",rowNames=T)
+PPNM_immune <- read.xlsx(file.path(dir,"Analysis/DE_invivo_bulk_vs_scRNA_Lyer_immune.xlsx"),sheet="PPNM_immune",rowNames=T)
+bppnm_and_ppnm <- union(rownames(BPPNM_immune), rownames(PPNM_immune))
+bppnm_ppnm_ms <- union(rownames(BPPNM_ms), rownames(PPNM_ms))
+BPPNM_EMT_all <- read.table(file.path(dir,"DEseq2","BPPNM_Mes_vs_BPPNM_Epi.deseq2_output.tsv"))
+PPNM_EMT_all <- read.table(file.path(dir,"DEseq2","PPNM_Mes_vs_PPNM_Epi.deseq2_output.tsv"))
+```
+
+```{r}
+matchMMUsymbol<-function(human_symbol){
+  dir = "~/Dropbox (Partners HealthCare)/Documents/Code"
+	map=read.table(file.path(dir,'codes_Davis/src/Mouse_Human_GeneIDs_sub.txt'),sep=' ',header=T)
+	map_sor<-map[match(human_symbol,map$hsa_symbol),]
+	mouse<-map_sor$mmu_symbol
+	return(mouse)
+}
+# Find OC cluster markers
+oc.markers <- FindAllMarkers(oc, only.pos = T, min.pct=0.25, logfc.threshold = 0.25)
+oc.markers$mouse_symbol <- matchMMUsymbol(rownames(oc.markers))
+write.table(oc.markers, "~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/OC.markers.all.txt", sep="\t")
+
+human_mouse_markers <- oc.markers[oc.markers$mouse_symbol %in% bppnm_ppnm_ms,]
+# Add mouse in vivo bulk RNA-seq BPPNM and PPNM LFC 
+t.avg.pathways$Mesenchymal <- progeny_scores_df[match(rownames(t.avg.pathways),rownames(progeny_scores_df)),]$Mesenchymal1
+human_mouse_markers$BPPNM.lfc <- BPPNM_EMT_all[match(human_mouse_markers$mouse_symbol,rownames(BPPNM_EMT_all)),]$log2FoldChange
+human_mouse_markers$PPNM.lfc <- PPNM_EMT_all[match(human_mouse_markers$mouse_symbol,rownames(PPNM_EMT_all)),]$log2FoldChange
+write.table(human_mouse_markers, "~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/humansc_vs_mousebulk_markers.txt", sep="\t")
+```
+
+```{r}
+# Make Volcano Plot of gene enrichment, label top
+human_mouse_markers <- human_mouse_markers[order(human_mouse_markers$avg_log2FC,decreasing=T),]
+top30 <- rownames(human_mouse_markers)[1:40]
+human_mouse_markers <- mutate(human_mouse_markers, labels = ifelse(rownames(human_mouse_markers) %in% top30, rownames(human_mouse_markers),NA))
+ggplot(human_mouse_markers, aes(x=BPPNM.lfc, y=avg_log2FC, color=cluster, label=labels))+geom_point()+ 
+  geom_text_repel(aes(label=labels),size=3,color="Black")+
+  scale_y_continuous(limits = c(0,NA))+ 
+  geom_vline(xintercept=0)+ geom_hline(yintercept=0)+
+  labs(x="BPPNM in vivo bulk Mes vs. Epi LFC",y="Garcia scRNA-seq Cluster LFC",title="Mouse vs. Human EMT Marker Expression")+
+  scale_color_brewer(palette="Paired")+
+  theme(plot.title=element_text(hjust=0.5,size=15))
+```
+```{r}
+mouse_gene_sets = msigdbr(species = "Mus musculus")
+mouse_hallmark <- mouse_gene_sets %>% dplyr::filter(gs_cat == "H") 
+mouse_EMT <- mouse_hallmark[mouse_hallmark$gs_name %in% "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION", ]
+human_mouse_new <- human_mouse_markers[!rownames(human_mouse_markers) %in% mouse_EMT$human_gene_symbol,]
+human_mouse_new <- human_mouse_new[order(human_mouse_new$BPPNM.lfc,decreasing=T),]
+
+immune_sets <- c('HALLMARK_COMPLEMENT', 'HALLMARK_IL2_STAT5_SIGNALING', 
+                 'HALLMARK_IL6_JAK_STAT3_SIGNALING', 'HALLMARK_INFLAMMATORY_RESPONSE', 
+                 'HALLMARK_INTERFERON_ALPHA_RESPONSE', 'HALLMARK_INTERFERON_GAMMA_RESPONSE', 
+                 'HALLMARK_TGF_BETA_SIGNALING', 'HALLMARK_TNFA_SIGNALING_VIA_NFKB')
+mouse_himmune <- mouse_hallmark[mouse_hallmark$gs_name %in% immune_sets, ]
+human_mouse_immune <- human_mouse_markers[rownames(human_mouse_markers) %in% mouse_himmune$human_gene_symbol,]
+human_mouse_immune <- human_mouse_immune[order(human_mouse_immune$BPPNM.lfc,decreasing=T),]
+deseq_subsets <- list("humanSC_mouseBulk_Markers"=human_mouse_markers, "human_mouse_notEMT_Hallmark"=human_mouse_new, "human_mouse_Immune_Hallmark"=human_mouse_immune)
+write.xlsx(deseq_subsets,"~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/humansc_vs_mousebulk_genesets.xlsx",rowNames=T)
+```
+
+```{r}
+# Whole data
+dir <- "~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq"
+adnexa_sub <- readRDS(file.path(dir, "Adnexa_sub.rds"))
+oc_cohort <- readRDS("~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/Cohort_processed_filtered_annotated_release.rds")
+oc_cohort #929690 cells within 1 assay
+table(oc_cohort$cell_type)
+adnexa <- subset(oc_cohort,subset=tumor_supersite=="Adnexa")
+```
+```{r}
+Idents(adnexa_sub) <- "cell_type"
+p1 <- DimPlot(adnexa_sub, reduction="umap50",label=T) + NoLegend()
+p2 <- DimPlot(adnexa_sub, group.by="patient_id",reduction="umap50")
+p1+p2
+```
+```{r}
+adnexa.markers <- FindAllMarkers(adnexa_sub, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+write.table(adnexa.markers, "~/Dropbox (Partners HealthCare)/Garcia_human_oc_scRNAseq/adnexa.markers.txt", sep="\t")
+top5_adnexa <- adnexa.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 5, order_by = avg_log2FC)
+DoHeatmap(adnexa_sub, features=setdiff(top5_adnexa$gene,c("VWA5A","IL32","CD2")))+NoLegend()
+```
+
+```{r}
+# Run Harmony and UMAP
+adnexa_sub <- RunHarmony(adnexa_sub, "orig.ident",reduction.use="pca", plot_convergence = T)
+adnexa_sub <- FindNeighbors(adnexa_sub, reduction="harmony",dims = 1:50)
+adnexa_sub <- FindClusters(adnexa_sub, reduction="harmony",resolution=0.3)
+adnexa_sub <- RunUMAP(ovarian.integrated, reduction="harmony",dims=1:30, reduction.name = "umap_harmony")
+p1 <- DimPlot(ovarian.integrated, reduction = "umap_harmony", group.by = "orig.ident")
+p2 <- DimPlot(ovarian.integrated, reduction = "umap_harmony", label = TRUE, repel = TRUE) + NoLegend()
+p1+p2
+```
+

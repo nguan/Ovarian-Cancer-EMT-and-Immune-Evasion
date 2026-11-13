@@ -1,0 +1,473 @@
+---
+title: "BPPNM EMT RNA-seq"
+output: html_notebook
+---
+
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(DESeq2)
+library(tximport)
+library(biomaRt)
+library(readr)
+library(readxl)
+library(ensembldb)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(org.Hs.eg.db)
+library(Orthology.eg.db)
+library("vsn")
+library(EnhancedVolcano)
+library(msigdbr)
+library(pheatmap)
+```
+  The RNA-seq data contains 4 conditions: Ep-low, Ep-high, Ep-low-IFNg (10ng/mL for 24hr), or Ep-low-IFNg. With 3 repliates each.
+  First, RNA-seq reads were quantified using Salmon/1.8.0. 
+  Transcriptome version: GRCm39, Esembl 108
+1. We will import count files using tximport, and perform alignment QC using STAR + Qualimap.
+```{r}
+# Load metadata and tx2gene file
+dir <- "~/Dropbox (Partners HealthCare)/BPPNM RNA-seq/results"
+dira <- "~/Dropbox (Partners HealthCare)/BPPNM RNA-seq/Analysis"
+meta <- read.table(file.path(dira,"BPPNM_EMT_meta.csv"), sep=",",header=T)
+meta$Condition <- factor(meta$Condition)
+meta$EMT <- factor(meta$EMT)
+txdb <- makeTxDbFromEnsembl(organism="Mus musculus", release=108)
+k <- keys(txdb, keytype="TXNAME")
+tx2gene <- select(txdb, k, "GENEID", "TXNAME")
+# Load Salmon output using tximport
+files <- file.path(dir,paste("salmon/",meta$Sample,"_salmon", sep=""),"quant.sf")
+txi_data <- tximport(files, type="salmon",tx2gene=tx2gene, ignoreTxVersion = T)
+```
+2. Make DEseq dataset
+```{r}
+names(txi_data)
+head(txi_data$counts)
+dds <- DESeqDataSetFromTximport(txi_data, colData = meta, design = ~Condition)
+colnames(dds) <- meta$Sample
+dds
+```
+
+```{r}
+# Data QC, remove genes with low counts
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+```
+
+```{r}
+# EpCAM-low
+dds <- DESeq(dds)
+res <- results(dds)
+resultsNames(dds)
+```
+
+```{r}
+dds <- readRDS(file.path(dira, "BPPNM_EMT_deseq2.rds"))
+res.Ep_Ctrl <- results(dds, contrast=c("Condition","Eplow_Ctrl","Ephigh_Ctrl"))
+res.Ephigh_Stim <- results(dds, contrast=c("Condition","Ephigh_IFNg","Ephigh_Ctrl"))
+res.Ep_IFNg <- results(dds, contrast=c("Condition","Eplow_IFNg","Ephigh_IFNg"))
+res.Eplow_Stim <- results(dds, contrast=c("Condition","Eplow_IFNg","Eplow_Ctrl"))
+#saveRDS(dds, file.path(dira, "BPPNM_EMT_deseq2.rds"))
+```
+
+```{r}
+resLFC <- lfcShrink(dds, coef="Condition_Eplow_Ctrl_vs_Ephigh_Ctrl", type="apeglm")
+resLFC
+plotMA(res.Ep_Ctrl, ylim=c(-3,3))
+plotMA(resLFC, ylim=c(-3,3))
+```
+```{r}
+# Data visualization using PCA
+vsd <- vst(dds, blind=F)
+plotPCA(vsd, intgroup=c("EMT","Stimulation"))
+meanSdPlot(assay(vsd))
+```
+
+```{r}
+summary(res.Ep_Ctrl)
+summary(res.Ep_IFNg)
+summary(res.Ephigh_Stim)
+summary(res.Eplow_Stim)
+```
+```{r}
+# RNA
+genenames <- select(org.Mm.eg.db, keys= keys(org.Mm.eg.db, keytype="ENSEMBL"), columns=c("SYMBOL", "ENSEMBL"), keytype="ENSEMBL")
+resfiles <- list(res.Ep_Ctrl,res.Ep_IFNg,res.Ephigh_Stim,res.Eplow_Stim)
+filenames <- c("Eplow_Ctrl_vs_Ephigh_Ctrl.deseq2_output.tsv", "Eplow_IFNg_vs_Ephigh_IFNg.deseq2_output.tsv",
+               "Ephigh_IFNg_vs_Ephigh_Ctrl.deseq2_output.tsv", "Eplow_IFNg_vs_Eplow_Ctrl.deseq2_output.tsv")
+plotnames <- c("Eplow_Ctrl_vs_Ephigh_Ctrl", "Eplow_IFNg_vs_Ephigh_IFNg",
+               "Ephigh_IFNg_vs_Ephigh_Ctrl", "Eplow_IFNg_vs_Eplow_Ctrl")
+for (i in 1:4){
+  resp_table <- merge(as.data.frame(resfiles[i]), genenames, by.x=0, by.y="ENSEMBL")
+  resp_table <- resp_table[!duplicated(resp_table$SYMBOL),]
+  resp_table <- resp_table %>%  remove_rownames() %>% column_to_rownames(var = "SYMBOL")
+  resp_table <- resp_table[order(resp_table$padj), ]
+  #p1 <- EnhancedVolcano(resp_table, lab=rownames(resp_table), x="log2FoldChange", y="padj", title= plotnames[i], xlim = c(-8,8), pointSize = 1, pCutoff=10e-5, FCcutoff=1, labSize=4)
+  #print(p1)
+  #write.table(resp_table, file=file.path(dir, "DEseq2",filenames[i]), sep='\t', row.names=T)
+  resSig <- subset(resp_table, padj < 0.1 & abs(log2FoldChange) > 0.5)
+  resSig <- resSig[order(resSig$log2FoldChange),]
+  print(str(sum(resSig$log2FoldChange < 0)), str(sum(resSig$log2FoldChange > 0)))
+  write.table(resSig, file=paste(dir, "/DEseq2/",plotnames[i],".deseq2_significant.tsv",sep=""), sep='\t', row.names=T)
+}
+
+```
+```{r}
+# Run Deseq2 for interaction term
+dds.int <- DESeqDataSetFromTximport(txi_data, colData = meta, design = ~EMT+Stimulation+EMT:Stimulation)
+colnames(dds.int) <- meta$Sample
+keep <- rowSums(counts(dds.int)) >= 10
+dds.int <- dds.int[keep,]
+dds.int
+```
+```{r}
+dds.int <- DESeq(dds.int)
+res.int <- results(dds.int)
+resultsNames(dds.int)
+```
+```{r}
+summary(res.int)
+resp_table <- merge(as.data.frame(res.int), genenames, by.x=0, by.y="ENSEMBL")
+resp_table <- resp_table[!duplicated(resp_table$SYMBOL),]
+resp_table <- resp_table %>%  remove_rownames() %>% column_to_rownames(var = "SYMBOL")
+resp_table <- resp_table[order(resp_table$padj), ]
+p1 <- EnhancedVolcano(resp_table, lab=rownames(resp_table), x="log2FoldChange", y="pvalue", title= "Interaction term Eplow_IFNg", xlim = c(-8,8), ylim=c(0,15),pointSize = 1, pCutoff=10e-5, FCcutoff=0.5, labSize=4)
+print(p1)
+write.table(resp_table, file=file.path(dir, "DEseq2", "EMTEp_low.StimulationIFNg.deseq2_output.tsv"), sep='\t', row.names=T)
+resSig <- subset(resp_table, pvalue < 0.01)
+resSig <- resSig[order(resSig$log2FoldChange),]
+write.table(resSig, file=file.path(dir, "DEseq2", "EMTEp_low.StimulationIFNg.deseq2_p0.01.tsv"), sep='\t', row.names=T)
+```
+```{r}
+# Change Ensembl.id to MGI symobols, Export vst transformed data
+vsd.table <- merge(assay(vsd), genenames, by.x=0, by.y="ENSEMBL")
+vsd.table <- vsd.table[!duplicated(vsd.table$SYMBOL),]
+vsd.table <- vsd.table %>%  remove_rownames() %>% column_to_rownames(var = "SYMBOL")
+vsd.table <- subset(vsd.table, select=-Row.names)
+write.table(vsd.table, file.path(dir, "vst.tsv"), sep="\t")
+```
+
+3. Differential expression gene list comparison 
+```{r}
+# Load datasets
+dir <- "~/Dropbox (Partners HealthCare)/BPPNM RNA-seq/results"
+ephigh_stim <- read.table(file.path(dir,"DEseq2","Ephigh_IFNg_vs_Ephigh_Ctrl.deseq2_significant.tsv"))
+eplow_stim <- read.table(file.path(dir,"DEseq2","Eplow_IFNg_vs_Eplow_Ctrl.deseq2_significant.tsv"))
+emt_Ctrl <- read.table(file.path(dir,"DEseq2","Eplow_Ctrl_vs_Ephigh_Ctrl.deseq2_significant.tsv"))
+emt_IFNg <- read.table(file.path(dir,"DEseq2","Eplow_IFNg_vs_Ephigh_IFNg.deseq2_significant.tsv"))
+```
+
+```{r}
+# Compare eplow_stim vs. ephigh_stim
+ifng_overlap <- intersect(rownames(ephigh_stim), rownames(eplow_stim))
+ifng_eplow <- setdiff(rownames(eplow_stim), rownames(ephigh_stim))
+ifng_ephigh <- setdiff(rownames(ephigh_stim), rownames(eplow_stim))
+```
+```{r}
+# Of those, how many are upregulated, downregulated?
+sum(eplow_stim[rownames(eplow_stim) %in% ifng_eplow,]$log2FoldChange < 0)
+```
+```{r}
+ephigh_stim_all <- read.table(file.path(dir,"DEseq2","Ephigh_IFNg_vs_Ephigh_Ctrl.deseq2_output.tsv"))
+eplow_ifng_up <- eplow_stim[rownames(eplow_stim) %in% ifng_eplow & eplow_stim$log2FoldChange > 0.5,]
+eplow_ifng_down <- eplow_stim[rownames(eplow_stim) %in% ifng_eplow & eplow_stim$log2FoldChange < -0.5,]
+eplow_ifng_up <- subset(eplow_ifng_up, select =-c(Row.names))
+eplow_ifng_upcompare <- merge(eplow_ifng_up, ephigh_stim_all["log2FoldChange"], by=0)
+eplow_ifng_upcompare <- eplow_ifng_upcompare[(eplow_ifng_upcompare$log2FoldChange.x-eplow_ifng_upcompare$log2FoldChange.y)>0.25,]
+eplow_ifng_down <- subset(eplow_ifng_down, select =-c(Row.names))
+eplow_ifng_downcompare <- merge(eplow_ifng_down, ephigh_stim_all["log2FoldChange"], by=0)
+eplow_ifng_downcompare <- eplow_ifng_downcompare[(eplow_ifng_downcompare$log2FoldChange.x-eplow_ifng_downcompare$log2FoldChange.y) < (-0.25),]
+eplow_stim_exposurepost <- eplow_stim[rownames(eplow_stim) %in% union(eplow_ifng_upcompare$Row.names, eplow_ifng_downcompare$Row.names),]
+write.table(eplow_stim_exposurepost, file=paste(dir,"/DEseq2/","Eplow_stim.exposurepost.deseq2_significant.tsv",sep=""), sep='\t', row.names=T)
+```
+
+```{r}
+emt_overlap <- intersect(rownames(emt_Ctrl), rownames(emt_IFNg))
+emt_ctrl_only <- setdiff(rownames(emt_Ctrl), rownames(emt_IFNg))
+emt_ifng_only <- setdiff(rownames(emt_IFNg), rownames(emt_Ctrl))
+```
+```{r}
+sum(emt_Ctrl[rownames(emt_Ctrl) %in% emt_ctrl_only, ]$log2FoldChange < 0)
+```
+```{r}
+# For each subset, calculate which ones are differentially expressed in the correct direction, with delta_LFC > 0.25
+emt_Ctrl_all <- read.table(file.path(dir,"DEseq2","Eplow_Ctrl_vs_Ephigh_Ctrl.deseq2_output.tsv"))
+emt_ifng_up <- emt_IFNg[rownames(emt_IFNg) %in% emt_ifng_only & emt_IFNg$log2FoldChange > 0.5,]
+emt_ifng_down <- emt_IFNg[rownames(emt_IFNg) %in% emt_ifng_only & emt_IFNg$log2FoldChange < -0.5,]
+emt_ifng_up <- subset(emt_ifng_up, select =-c(Row.names))
+emt_ifng_upcompare <- merge(emt_ifng_up, emt_Ctrl_all["log2FoldChange"], by=0)
+emt_ifng_upcompare <- emt_ifng_upcompare[(emt_ifng_upcompare$log2FoldChange.x-emt_ifng_upcompare$log2FoldChange.y)>0.25,]
+emt_ifng_down <- subset(emt_ifng_down, select =-c(Row.names))
+emt_ifng_downcompare <- merge(emt_ifng_down, emt_Ctrl_all["log2FoldChange"], by=0)
+emt_ifng_downcompare <- emt_ifng_downcompare[(emt_ifng_downcompare$log2FoldChange.x-emt_ifng_downcompare$log2FoldChange.y) < (-0.25),]
+emt_ifng_exposurepost <- emt_IFNg[rownames(emt_IFNg) %in% union(emt_ifng_upcompare$Row.names, emt_ifng_downcompare$Row.names),]
+```
+
+```{r}
+write.table(emt_ifng_exposurepost, file=paste(dir,"/DEseq2/","Eplow_IFNg.exposurepost.deseq2_significant.tsv",sep=""), sep='\t', row.names=T)
+```
+8. Examine Pathways in EMT 
+```{r}
+emt_ifng_exposurepost <- read.table(file.path(dir, "DEseq2","Eplow_IFNg.exposurepost.deseq2_significant.tsv"), sep="\t")
+GO_sets <- c( 'HALLMARK_IL2_STAT5_SIGNALING', 'HALLMARK_IL6_JAK_STAT3_SIGNALING', 'HALLMARK_INTERFERON_GAMMA_RESPONSE', 'HALLMARK_TNFA_SIGNALING_VIA_NFKB', "HALLMARK_P53_PATHWAY")
+mouse_gene_sets = msigdbr(species = "Mus musculus")
+mouse_hallmark <- mouse_gene_sets %>% dplyr::filter(gs_cat == "H") # Hallmark sets
+mouse_go <- mouse_hallmark[mouse_hallmark$gs_name %in% GO_sets, ] # Immune gene sets
+emt_genes <- intersect(rownames(emt_ifng_exposurepost), mouse_go$gene_symbol)
+
+# Convert Ensembl to mouse gene symbols
+mensembl_mgi_zscores <- function(dds){
+  vsd <- vst(dds, blind=F)
+  counts <- as.data.frame(assay(vsd))
+  gns <- rownames(counts)
+  genenames <- select(org.Mm.eg.db, keys= gns, columns=c("SYMBOL", "ENSEMBL"), keytype="ENSEMBL")
+  norm_genes <- merge(genenames, counts, by.x="ENSEMBL", by.y=0)
+  norm_genes <- norm_genes[!duplicated(norm_genes$SYMBOL) & !is.na(norm_genes$SYMBOL),]
+  norm_genes <- norm_genes %>%  remove_rownames() %>% column_to_rownames(var = "SYMBOL")
+  norm_genes <- norm_genes[-c(1)]
+  means <- rowMeans(norm_genes)
+  sds <- apply(norm_genes, 1, sd)
+  heatmap_zscore <- (norm_genes-means)/sds # Z-score normalized gene expression
+  return(heatmap_zscore)
+}
+norm_genes <- mensembl_mgi_zscores(dds)
+gsea_top10 <- norm_genes[rownames(norm_genes) %in% emt_genes,]
+pheatmap(gsea_top10[c(4:6,10:12)])
+```
+
+```{r}
+# Which gene are found in immune-related pathways?
+immune_sets <- c('HALLMARK_COMPLEMENT', 'HALLMARK_IL2_STAT5_SIGNALING', 
+                 'HALLMARK_IL6_JAK_STAT3_SIGNALING', 'HALLMARK_INFLAMMATORY_RESPONSE', 
+                 'HALLMARK_INTERFERON_ALPHA_RESPONSE', 'HALLMARK_INTERFERON_GAMMA_RESPONSE', 
+                 'HALLMARK_TGF_BETA_SIGNALING', 'HALLMARK_TNFA_SIGNALING_VIA_NFKB')
+# For pb3_up and pb3_down, find genes that are in hallmark_immune 
+# First, load MsigDB gene sets (with matching mouse gene names)
+mouse_gene_sets = msigdbr(species = "Mus musculus")
+head(mouse_gene_sets) # Look at data structure
+msigdbr_collections() # What gene sets are there?
+mouse_hallmark <- mouse_gene_sets %>% dplyr::filter(gs_cat == "H") # Hallmark sets
+mouse_himmune <- mouse_hallmark[mouse_hallmark$gs_name %in% immune_sets, ] # Immune gene sets
+# Get the overlap between mouse_himmune and pb3_up, pb3_down
+emt_up <- emt_ifng_exposurepost[emt_ifng_exposurepost$log2FoldChange > 0,]
+emt_down <- emt_ifng_exposurepost[emt_ifng_exposurepost$log2FoldChange < 0,]
+emt_up <- emt_IFNg[emt_IFNg$log2FoldChange > 0, ]
+emt_down <- emt_IFNg[emt_IFNg$log2FoldChange < 0, ]
+himmune_up <- mouse_himmune[mouse_himmune$gene_symbol %in% rownames(emt_up), ] # 99 genes up
+himmune_down <- mouse_himmune[mouse_himmune$gene_symbol %in% rownames(emt_down), ] # 167 genes down
+# Get number of unique genes in each
+up_igenes <- unique(himmune_up$gene_symbol) # 66 unique genes
+down_igenes <- unique(himmune_down$gene_symbol) # 109 unique genes
+write.table(himmune_up, file=file.path(dira, "Hallmark_immune_Eplow_IFNg.tsv"),sep="\t",quote=FALSE)
+write.table(himmune_down, file=file.path(dira, "Hallmark_immune_Ephigh_IFNg.tsv"),sep="\t",quote=FALSE)
+```
+
+```{r}
+write.table(up_igenes,"Immune_genes_Eplow_IFNg.csv",quote=F, col.names=F,row.names=F)
+write.table(down_igenes,"Immune_genes_Ephigh_IFNg.csv",quote=F, col.names=F,row.names=F)
+```
+
+```{r}
+emt_up_minipool <- intersect(rownames(emt_up), df$id)
+emt_up_minipool
+emt_down_minipool <- intersect(rownames(emt_down), df$id)
+emt_down_minipool
+```
+
+4. IFNg related genes differentially expressed
+```{r}
+# Get genes in Ep-low vs. Ep-high Ctrl, MSigDB Hallmark database
+
+hallmark_ifng <- 'HALLMARK_INTERFERON_GAMMA_RESPONSE'
+mouse_ifng <- mouse_hallmark[mouse_hallmark$gs_name %in% hallmark_ifng, ]
+emt_up <- emt_Ctrl[emt_Ctrl$log2FoldChange > 0.5, ] # 715 upregulated in Ep-low Ctrl vs. Ep-high Ctrl
+emt_up_ifng <- emt_up[rownames(emt_up) %in% mouse_ifng$gene_symbol,]
+write.table(emt_up_ifng, file.path(dir,"DEseq2","Eplow_Ctrl_vs_Ephigh_Ctrl.up_ifng.tsv"), sep="\t")
+write(rownames(emt_up_ifng),file.path(dir,"DEseq2","Eplow_Ctrl_vs_Ephigh_Ctrl.up_ifng_genes.txt"))
+
+# KEGG N-Glycan pathway genes in Pb3 genome-wide CRISPR screen depleted genes (n=14)
+kegg_gly <- 'KEGG_N_GLYCAN_BIOSYNTHESIS'
+kegg <- mouse_gene_sets %>% dplyr::filter(gs_subcat == 'CP:KEGG')
+mouse_kegg_gly <- kegg[kegg$gs_name == kegg_gly, ]
+pb3_neg_gly <- intersect(ngenes,mouse_kegg_gly$gene_symbol)
+write(pb3_neg_gly, "~/Dropbox (Partners HealthCare)/Pb3 CRISPR screen/pb3_crispr_KEGG_Gly.txt")
+
+```
+5. Prep for GSEA
+```{r}
+norm_counts <- as.data.frame(counts(dds, normalized = T))
+fun <- function(gns){
+    egs <- mapIds(org.Mm.eg.db, gns, "ENTREZID","ENSEMBL")
+    mapped <- select(Orthology.eg.db, egs, "Homo.sapiens","Mus.musculus")
+    mapped$HS <- mapIds(org.Hs.eg.db, as.character(mapped$Homo.sapiens), "SYMBOL", "ENTREZID")
+    mapped <- mapped[!is.na(mapped$Homo.sapiens) & !duplicated(mapped$HS),]
+    return(mapped)
+}
+gene_df <- fun(rownames(norm_counts))
+norm_genes <- merge(gene_df["HS"], norm_counts, by=0)
+# Do column to rownames and remove ENSEMBL column
+norm_genes <- norm_genes %>%  remove_rownames() %>% column_to_rownames(var = "HS")
+colnames(norm_genes)[1] <- "DESCRIPTION"
+norm_genes$DESCRIPTION = "na"
+write.table(norm_genes, file=file.path(dira, "norm_counts.txt"),sep="\t")
+```
+
+
+6. Tmem165 and N-Glycan pathway analysis
+```{r}
+mouse_gene_sets = msigdbr(species = "Mus musculus")
+mouse_c7 = mouse_gene_sets %>% dplyr::filter(gs_subcat == "GO:BP")
+tmem165_c4 <- mouse_c7[mouse_c7$gene_symbol=="Tmem165",]
+# What pathways to filter? 
+write.table(tmem165_c5, file=file.path(dira, "Tmem165_c5.tsv"),sep="\t")
+```
+
+```{r}
+# All Glycosylation pathways
+glyc_paths <- dplyr::filter(mouse_gene_sets, grepl('GLYCOSYLATION|GLYCAN|GLYCOPROTEIN', gs_name)) # 4143 terms containing Glycosylation, Glycan, or Glycoprotein
+paths <- unique(glyc_paths$gs_name)
+# Next, let's look at which Minipool genes were in these pathways
+df<-read.csv('~/Documents/Code/mini_pool/PB3_ET_1:4_ET1_4_vsNoOVA_r1.gene_summary.txt',sep='\t')
+df2<-read.csv('~/Documents/Code/mini_pool/L2_ET_3:1_ET3_1_vsNoGFP_r1.gene_summary.txt',sep='\t')
+glyc_mini <- intersect(df$id, glyc_paths$gene_symbol) # 47 genes total
+glyc_mini_df <- df2[df2$id %in% glyc_paths$gene_symbol,]
+write.table(glyc_mini_df,file=file.path(dira, "glyc_paths.tsv"),sep="\t",row.names=F)
+# Next, plot graphs of Pb3 vs. 4T1 LFC, p-values on these Minipool genes (See Mini_scatter_Alexa.R)
+```
+
+```{r}
+glycoprotein_df <- read_excel("~/Dropbox (Partners HealthCare)/HumanAll.xlsx", col_names=T, skip=1) #5723-7200 unique N-glycoproteins from N-GlycositeAtlas https://clinicalproteomicsjournal.biomedcentral.com/articles/10.1186/s12014-019-9254-0 
+glycoproteins_human <- unique(glycoprotein_df$`Gene names`)
+# Map mouse to human genes in Minipool
+egs <- mapIds(org.Mm.eg.db, df$id, "ENTREZID","SYMBOL")
+    mapped <- select(Orthology.eg.db, egs, "Homo.sapiens","Mus.musculus")
+    mapped$HS <- mapIds(org.Hs.eg.db, as.character(mapped$Homo.sapiens), "SYMBOL", "ENTREZID")
+mapped <- mapped[!is.na(mapped$Homo.sapiens) & !duplicated(mapped$HS),]
+df1 <- merge(df, mapped["HS"], by.x="id", by.y=0)
+df1 <- df1[order(df1$neg.p.value),]
+df1_glycprot <- as.data.frame(df1[df1$HS %in% glycoproteins_human,])
+df1_glycprot <- apply(df1_glycprot,2,as.character)
+write.table(df1_glycprot,file.path(dira, "minipool_glycoprot.tsv"),sep="\t", row.names = F)
+# Look at glycoprotein datasets in MsigDB
+# Plot Minipool Pb3 or 4T1 significant Glycoproteins
+glyc_4T1 <- df2_glycprot[df2_glycprot$neg.fdr <= 0.1,]$id
+glyc_pb3 <- df1_glycprot[df1_glycprot$neg.fdr <= 0.1,]$id
+glyc_genes <- union(glyc_4T1, glyc_pb3)
+```
+```{r}
+emt_ifng <- read.table( file=paste(dir,"/DEseq2/","Eplow_IFNg.exposurepost.deseq2_significant.tsv",sep=""))
+write.table(rownames(emt_ifng),file=file.path(dira,"EMT_genes.txt"),col.names=F, row.names=F, quote=F)
+```
+
+7. GSEA top 3 pathways heatmap
+```{r}
+dir <- "~/Dropbox (Partners HealthCare)/BPPNM RNA-seq/results/GSEA/GSEA_Mes_Ctrl_vs_Epi_Ctrl.Gsea.1677253945401"
+mes_ctrl <- read.csv(file.path(dir,"gsea_report_for_Mes_Ctrl_1677253945401.tsv"), sep="\t")
+epi_ctrl <- read.csv(file.path(dir,"gsea_report_for_Epi_Ctrl_1677253945401.tsv"), sep="\t")
+diri <- "~/Dropbox (Partners HealthCare)/BPPNM RNA-seq/results/GSEA/GSEA_Mes_IFNg_vs_Epi_IFNg.Gsea.1677254380127"
+mes_ifng <- read.csv(file.path(diri,"gsea_report_for_Mes_IFNg_1677254380127.tsv"), sep="\t")
+epi_ifng <- read.csv(file.path(diri,"gsea_report_for_Epi_IFNg_1677254380127.tsv"), sep="\t")
+get_genes <- function(mes, epi, dir){
+  genes <- c()
+  for (p in mes$NAME[1:3]){
+    print(p)
+    p_file <- read.csv(paste(dir, "/",p,".tsv", sep=""), sep="\t")
+    ngenes <- p_file$SYMBOL[1:10]
+    genes <- c(genes,ngenes)
+  }
+  for (p in epi$NAME[1:3]){
+    print(p)
+    p_file <- read.csv(paste(dir, "/",p,".tsv", sep=""), sep="\t")
+    nrows <- dim(p_file)[1]
+    ngenes <- p_file$SYMBOL[(nrows-9):nrows]
+    genes <- c(genes,ngenes)
+    }
+  return(genes)
+}
+genes <- get_genes(mes_ifng,mes_ifng, diri)
+# Normalize genes and plot heatmap
+# Convert row.names to human symbol
+mensembl_hgnc_zscores <- function(counts){
+  gns <- rownames(counts)
+  egs <- mapIds(org.Mm.eg.db, gns, "ENTREZID","ENSEMBL")
+  mapped <- select(Orthology.eg.db, egs, "Homo.sapiens","Mus.musculus")
+  mapped$HS <- mapIds(org.Hs.eg.db, as.character(mapped$Homo.sapiens), "SYMBOL", "ENTREZID")
+  mapped <- mapped[!is.na(mapped$Homo.sapiens) & !duplicated(mapped$HS),]
+  norm_genes <- merge(mapped["HS"], counts, by=0)
+  norm_genes <- norm_genes %>%  remove_rownames() %>% column_to_rownames(var = "HS")
+  norm_genes <- norm_genes[-c(1)]
+  means <- rowMeans(norm_genes)
+  sds <- apply(norm_genes, 1, sd)
+  heatmap_zscore <- (norm_genes-means)/sds # Z-score normalized gene expression
+  return(heatmap_zscore)
+}
+vsd <- vst(dds, blind=F)
+count <- as.data.frame(assay(vsd))
+norm_genes <- mensembl_hgnc_zscores(count)
+gsea_top10 <- norm_genes[rownames(norm_genes) %in% emt_genes,]
+pheatmap(gsea_top10)
+```
+```{r}
+dira <- "~/Dropbox (Partners HealthCare)/BPPNM RNA-seq/Analysis"
+dir <- "~/Dropbox (Partners HealthCare)/BPPNM RNA-seq/results/GSEA/GSEA_Mes_Ctrl_vs_Epi_Ctrl.Gsea.1677253945401"
+mes_ctrl <- read.csv(file.path(dir,"gsea_report_for_Mes_Ctrl_1677253945401.tsv"), sep="\t")
+epi_ctrl <- read.csv(file.path(dir,"gsea_report_for_Epi_Ctrl_1677253945401.tsv"), sep="\t")
+diri <- "~/Dropbox (Partners HealthCare)/BPPNM RNA-seq/results/GSEA/GSEA_Mes_IFNg_vs_Epi_IFNg.Gsea.1677254380127"
+mes_ifng <- read.csv(file.path(diri,"gsea_report_for_Mes_IFNg_1677254380127.tsv"), sep="\t")
+epi_ifng <- read.csv(file.path(diri,"gsea_report_for_Epi_IFNg_1677254380127.tsv"), sep="\t")
+get_genes <- function(mes, epi, dir){
+  genes <- c()
+  for (p in mes$NAME[1:3]){
+    print(p)
+    p_file <- read.csv(paste(dir, "/",p,".tsv", sep=""), sep="\t")
+    ngenes <- p_file$SYMBOL[1:10]
+    genes <- c(genes,ngenes)
+  }
+  for (p in epi$NAME[c(1:3)]){
+    print(p)
+    p_file <- read.csv(paste(dir, "/",p,".tsv", sep=""), sep="\t")
+    nrows <- dim(p_file)[1]
+    ngenes <- p_file$SYMBOL[(nrows-9):nrows]
+    genes <- c(genes,ngenes)
+    }
+  return(genes)
+}
+genes <- get_genes(mes_ifng, epi_ifng, dir)
+# Normalize genes and plot heatmap
+# Convert row.names to human symbol
+mensembl_hgnc_zscores <- function(counts){
+  gns <- rownames(counts)
+  egs <- mapIds(org.Mm.eg.db, gns, "ENTREZID","ENSEMBL")
+  mapped <- select(Orthology.eg.db, egs, "Homo.sapiens","Mus.musculus")
+  mapped$HS <- mapIds(org.Hs.eg.db, as.character(mapped$Homo.sapiens), "SYMBOL", "ENTREZID")
+  mapped <- mapped[!is.na(mapped$Homo.sapiens) & !duplicated(mapped$HS),]
+  norm_genes <- merge(mapped["HS"], counts, by=0)
+  norm_genes <- norm_genes %>%  remove_rownames() %>% column_to_rownames(var = "HS")
+  norm_genes <- norm_genes[-c(1)]
+  means <- rowMeans(norm_genes)
+  sds <- apply(norm_genes, 1, sd)
+  heatmap_zscore <- (norm_genes-means)/sds # Z-score normalized gene expression
+  return(heatmap_zscore)
+}
+dds <- readRDS(file.path(dira, "BPPNM_EMT_deseq2.rds"))
+vsd <- vst(dds, blind=F)
+count <- as.data.frame(assay(vsd))
+norm_genes <- mensembl_hgnc_zscores(count)
+gsea_top10 <- norm_genes[match(genes, rownames(norm_genes)),] %>% drop_na()
+#gsea_top10 <- norm_genes[rownames(norm_genes) %in% genes,]
+pheatmap(gsea_top10, cluster_rows = F, gaps_row=c(10,20,30,40,50), color = colorRampPalette(c("blue", "white", "red"))(50))
+```
+
+```{r}
+emt_ctrls <- emt_Ctrl[emt_Ctrl$padj < 0.05, ]
+emt_ifngs <- emt_IFNg[emt_IFNg$padj < 0.05,]
+write.table(emt_ctrls, file=paste(dir, "/DEseq2/","Eplow_Ctrl_vs_Ephigh_Ctrl.deseq2_padj0.05.tsv",sep=""), sep='\t', row.names=T)
+write.table(emt_ifngs, file=paste(dir, "/DEseq2/","Eplow_IFNg_vs_Ephigh_IFNg.deseq2_padj0.05.tsv",sep=""), sep='\t', row.names=T)
+ephigh_stims <- ephigh_stim[ephigh_stim$padj < 0.05, ]
+eplow_stims <- eplow_stim[eplow_stim$padj < 0.05,]
+write.table(ephigh_stims, file=paste(dir, "/DEseq2/","Ephigh_IFNg_vs_Ephigh_Ctrl.deseq2_padj0.05.tsv",sep=""), sep='\t', row.names=T)
+write.table(eplow_stims, file=paste(dir, "/DEseq2/","Eplow_IFNg_vs_Eplow_Ctrl.deseq2_padj0.05.tsv",sep=""), sep='\t', row.names=T)
+```
+

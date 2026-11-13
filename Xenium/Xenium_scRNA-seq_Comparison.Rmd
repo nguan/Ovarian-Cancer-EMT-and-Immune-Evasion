@@ -1,0 +1,315 @@
+---
+title: "Mapping scRNA-seq Macrophage states onto spatial data"
+output: html_notebook
+---
+
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(reshape2)
+library(pheatmap)
+library(msigdbr)
+library(stringr)
+library(readxl)
+library(RColorBrewer)
+library(openxlsx)
+library(harmony)
+library(fgsea)
+library(ggrepel)
+library(ppcor)
+library(enrichR)
+library(EnhancedVolcano)
+library(ComplexHeatmap)
+library(patchwork)
+library(anndataR)
+library(SummarizedExperiment)
+library(SpatialExperiment)
+library(spacexr)
+library(SpatialCellChat)
+set.seed(10)
+```
+
+```{r}
+dir_sc = "/Users/ningguan/Partners Healthcare Dropbox/John Pyrdol - Lab Data/Wucherpfennig Lab Data/KW Lab Work- Current Members/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_TF_KO_Flex"
+dir_xen = "/Users/ningguan/Partners Healthcare Dropbox/John Pyrdol - Lab Data/Wucherpfennig Lab Data/KW Lab Work- Current Members/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_Xenium_Graham"
+```
+```{r}
+# load datasets 
+bppnm <- readRDS(file.path(dir_sc,"Analysis/bppnm.tfs.rds"))
+```
+```{r}
+sc_reference <- SummarizedExperiment(
+    assays = GetAssayData(bppnm, assay = "RNA", layer = "counts"),
+    colData = bppnm$Subcluster
+)
+colnames(colData(sc_reference)) = c("cell_type")
+```
+
+```{r}
+adata <- read_h5ad(file.path(dir_xen,"Graham_Chemo_Cell_Types_v2.h5ad"))
+
+# 2. Pull the counts matrix (transposed automatically into [genes x cells])
+counts_xenium <- t(adata$layers[["counts"]])
+
+# 3. Extract the Xenium single-cell centroids matrix from obsm
+# Typically saved as "spatial" or "X_spatial" in Scanpy/Squidpy
+spatial_coords <- as.matrix(adata$obsm[["spatial"]])
+colnames(spatial_coords) <- c("x", "y")
+rownames(spatial_coords) <- adata$obs_names
+
+# 4. Create the final SpatialExperiment container
+spatial_spe <- SpatialExperiment(
+    assays = list(counts = counts_xenium),
+    colData = adata$obs,
+    spatialCoords = spatial_coords
+)
+```
+```{r}
+rctd_data <- createRctd(spatial_spe, sc_reference)
+results_spe <- runRctd(rctd_data, rctd_mode = "doublet", max_cores = 1)
+```
+
+```{r}
+# Write the table
+classification_df <- data.frame(
+    pixel = colnames(assay(results_spe)),
+    spot_class = colData(results_spe)$spot_class,
+    first_type = colData(results_spe)$first_type,
+    second_type = colData(results_spe)$second_type
+)
+rctd_weights <- data.frame(assay(results_spe,"weights"))
+```
+```{r}
+write.table(classification_df, file.path(dir_xen,"RCTD/classification_df.txt"),sep="\t",quote=FALSE)
+write.table(rctd_weights, file.path(dir_xen,"RCTD/rctd_weights.txt"),sep="\t",quote=FALSE)
+```
+
+3. Run CellChat using Xenium labels 
+```{r}
+adata <- read_h5ad("./Graham_Chemo_Cell_Types_RCTD.h5ad")
+adata <- adata[!is.na(adata$obs[["RCTD_corrected"]]), ]
+# 2. Pull the counts matrix (transposed automatically into [genes x cells])
+log_xenium <- t(adata$layers[["lognorm"]])
+
+# 3. Extract the Xenium single-cell centroids matrix from obsm
+# Typically saved as "spatial" or "X_spatial" in Scanpy/Squidpy
+meta_data <- adata$obs
+rownames(meta_data) <- adata$obs_names
+# each tissue region is a sample: 5 samples, one condition (chemo), on 2 slides
+#   chemo1: Chemo reg1, reg2, reg3   |   chemo2: Chemo reg4, reg6
+meta_data$samples <- droplevels(factor(meta_data$region))
+stopifnot(nlevels(meta_data$samples) == 5)
+table(meta_data$samples, meta_data$samp)
+spatial_coords <- as.matrix(meta_data[, c("x", "y")])
+colnames(spatial_coords) <- c("x", "y")
+rownames(spatial_coords) <- adata$obs_names
+# SpatialCellChat's distance calculation ignores `samples`, and regions on different
+# slides share one micron frame, so shift each sample along x (gap >> interaction
+# range) to stop cells from different samples being treated as neighbors
+sample_offset <- (as.integer(meta_data$samples) - 1) * (max(spatial_coords[, "x"]) + 5000)
+spatial_coords[, "x"] <- spatial_coords[, "x"] + sample_offset
+# Spatial factor of spatial coordinates
+spot.size <- 10   # typical cell diameter (um) for single-cell resolution data
+spatial.factors <- list(ratio = 1, tol = spot.size / 2)
+```
+```{r}
+# cell groups = RCTD_corrected labels (drop any unused factor levels)
+meta_data$RCTD_corrected <- droplevels(factor(meta_data$RCTD_corrected))
+cellchat <- createSpatialCellChat(object = log_xenium, meta = meta_data,
+                                  group.by = "RCTD_corrected", datatype = "spatial",
+                                  coordinates = spatial_coords,
+                                  spatial.factors = spatial.factors)
+table(cellchat@idents)
+```
+
+```{r}
+# ligand-receptor database: mouse, protein signaling only (subsetDB default drops non-protein)
+cellchat@DB <- subsetDB(CellChatDB.mouse)
+
+# keep signaling genes, then find over-expressed genes / L-R pairs per cell group
+cellchat <- subsetData(cellchat)
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat, variable.both = FALSE)
+nrow(cellchat@LR$LRsig)   # L-R pairs measurable with the 300-gene panel
+```
+```{r}
+# SpatialCellChat 0.1.0 builds dense cell x cell matrices (295 GB for distances,
+# 314 GB for FN1_CD44 alone). These patches compute the same values only for
+# neighboring cells (checked identical to the original on a 2,216-cell region).
+source("./CellChat/spatialcellchat_sparse_patches.R")
+future::plan("sequential")   # workers reload the unpatched package and copy ~1.5 GB each
+
+# cell-level communication: diffusible signals up to 100 um, contact-dependent within 20 um
+# scale.distance = 1: closest cell pair is 1.56 um, package requires min scaled distance in [1, 2]
+cellchat <- computeCommunProb(cellchat, distance.use = TRUE,
+                              interaction.range = 100, scale.distance = 1,
+                              contact.dependent = TRUE, contact.range = 20)
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+saveRDS(cellchat, "./CellChat/cellchat_filtered.rds")
+# group-level communication + permutation p-values (creates net$prob / net$pval);
+# without it, computeCommunProbPathway partial-matches net$prob to the 192k x 192k
+# net$prob.cell and runs out of memory
+cellchat <- computeAvgCommunProb(cellchat)
+cellchat <- computeCommunProbPathway(cellchat)
+cellchat <- aggregateNet(cellchat)
+saveRDS(cellchat, "./CellChat/cellchat_RCTD_corrected.rds")
+cellchat@netP$pathways
+```
+```{r}
+# re-source patches: includes the fix for "should not be called with handlers on the stack"
+source("./CellChat/spatialcellchat_sparse_patches.R")
+cellchat <- netAnalysis_computeCentrality(
+  cellchat,
+  slot.name = "net",
+  do.group = T,
+  degree.only = T
+)
+```
+
+```{r}
+cellchat <- readRDS("./CellChat/cellchat_RCTD_corrected.rds")
+# cell types (RCTD_corrected) in space, one panel per sample
+# (Xenium = one label per cell, so no `proportion`; that is for Visium deconvolution
+#  pie charts. spatialDimPlot can't split samples, and the x offset squashes all 5 together)
+df_sp <- data.frame(cellchat@images$coordinates, cell_type = cellchat@idents,
+                    sample = cellchat@meta$samples)
+cols_ct <- setNames(scPalette(nlevels(df_sp$cell_type)), levels(df_sp$cell_type))
+plots_sp <- lapply(levels(df_sp$sample), function(s) {
+  ggplot(df_sp[df_sp$sample == s, ], aes(x_cent, y_cent, color = cell_type)) +
+    geom_point(size = 1, stroke = 0) +
+    scale_color_manual(values = cols_ct, limits = names(cols_ct)) +
+    scale_y_reverse() + coord_fixed() +
+    guides(color = guide_legend(override.aes = list(size = 3))) +
+    theme_void() + labs(title = s, color = "RCTD_corrected") +
+    if (s != levels(df_sp$sample)[1]) guides(color = "none")
+})
+wrap_plots(plots_sp, nrow = 2) + plot_layout(guides = "collect")
+```
+```{r}
+# Plot all the pathway signaling strength
+g1 <- rankNet(cellchat, mode = "single", slot.name = "netP", measure = "weight", signaling.type = "Secreted Signaling",title = "Secreted Signaling")
+g2 <- rankNet(cellchat, mode = "single", slot.name = "netP", measure = "weight", signaling.type = "ECM-Receptor",title = "ECM-Receptor")
+g3 <- rankNet(cellchat, mode = "single", slot.name = "netP", measure = "weight", signaling.type = "Cell-Cell Contact",title = "Cell-Cell Contact")
+patchwork::wrap_plots(g1, g2, g3, ncol = 3)
+```
+
+```{r}
+pathway.show = "CSF"
+netVisual_aggregate(cellchat, signaling = pathway.show, layout = "circle")
+```
+```{r}
+library(ComplexHeatmap)
+library(RColorBrewer)
+
+# signalingRole_network reads cellchat@netP$centr (per cell type x pathway).
+# The earlier centrality chunk used slot.name = "net" -> stored in net$centr, not netP,
+# and readRDS() above reloads the object anyway. Compute pathway-level centrality here:
+if (length(cellchat@netP$centr) == 0) {
+  cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP", do.group = TRUE)
+}
+netAnalysis_signalingRole_network(
+  cellchat, signaling = pathway.show, slot.name = "netP",
+  measure = c("outdeg","indeg"), measure.name = c("Sender","Receiver"),
+  width = 8, height = 3, font.size = 10
+)
+```
+```{r}
+netVisual_heatmap(cellchat, slot.name="netP", signaling = pathway.show, color.heatmap = "Reds")
+```
+
+```{r}
+# contribution of each ligand-receptor pair to the pathway
+netAnalysis_contribution(cellchat, signaling = pathway.show)
+```
+```{r, fig.width=8, fig.height=8}
+# aggregated cell-cell communication network: number of interactions and strength (weight)
+groupSize <- as.numeric(table(cellchat@idents))
+netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = TRUE,
+                 label.edge = FALSE, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = TRUE,
+                 label.edge = FALSE, title.name = "Interaction strength (weight)")
+```
+```{r, fig.width=8, fig.height=7}
+# same networks as heatmaps: rows = senders, columns = receivers
+netVisual_heatmap(cellchat, measure = "count",  color.heatmap = "Blues")
+netVisual_heatmap(cellchat, measure = "weight", color.heatmap = "Blues")
+```
+```{r}
+netVisual_circle(cellchat@net$count, sources.use = "T cells", vertex.weight = groupSize, weight.scale = TRUE, label.edge = FALSE, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, sources.use = "T cells", vertex.weight = groupSize, weight.scale = TRUE,label.edge = FALSE, title.name = "Interaction strength (weight)")
+```
+```{r}
+rankNet(cellchat, mode = "single", slot.name = "netP", measure = "weight", sources.use=c("Arg1+ Macrophages","Epi Cancer"),targets.use=c("Arg1+ Macrophages","Epi Cancer"),title = "Arg1+ Macrophages - Epi Cancer Signaling")
+```
+
+```{r, fig.width=20, fig.height=8}
+pathway.show="CXCL"
+# IL6 senders and receivers in space, per cell, one column per sample
+# Sender = sum of a cell's outgoing IL6 probabilities (weighted out-degree),
+# Receiver = sum of incoming (weighted in-degree); grey = 0. Color capped at the 99th percentile.
+P_path <- cellchat@netP$tmp$prob.cell[[pathway.show]]      # cell x cell, rows send -> columns receive
+df_role <- data.frame(cellchat@images$coordinates, cell_type = cellchat@idents,
+                      sample = cellchat@meta$samples,
+                      Sender = Matrix::rowSums(P_path), Receiver = Matrix::colSums(P_path))
+plot_role <- function(role) {
+  vmax <- quantile(df_role[[role]][df_role[[role]] > 0], 0.99)
+  lapply(levels(df_role$sample), function(s) {
+    d <- df_role[df_role$sample == s, ]
+    d <- d[order(d[[role]]), ]                                  # strongest cells drawn on top
+    ggplot(d, aes(x_cent, y_cent, color = pmin(.data[[role]], vmax))) +
+      geom_point(data = d[d[[role]] == 0, ], color = "grey88", size = 0.1, stroke = 0) +
+      geom_point(data = d[d[[role]] > 0, ], size = 0.25, stroke = 0) +
+      scale_color_viridis_c(option = "magma", direction = -1, limits = c(0, vmax), name = role) +
+      scale_y_reverse() + coord_fixed() + theme_void() +
+      labs(title = paste(s, "-", role))
+  })
+}
+wrap_plots(c(plot_role("Sender"), plot_role("Receiver")), nrow = 2) +
+  plot_layout(guides = "collect") +
+  plot_annotation(title = paste(pathway.show, "signaling: sending and receiving strength per cell"))
+
+# which cell types are sending / receiving IL6 (number of cells with non-zero strength)
+aggregate(cbind(sender_cells = Sender > 0, receiver_cells = Receiver > 0) ~ cell_type, df_role, sum)
+```
+```{r}
+pathway.show <- "CSF"
+ct.T     <- "T cells"
+ct.mac   <- c("Arg1+ Macrophages", "Cxcl10+ Macrophages", "Cycling Macrophages",
+              "Tissue Resident Macrophages", "DCs")
+ct.tumor <- c("Epi Cancer", "Cycling Epi Cancer", "Mes Cancer", "Cycling Mes Cancer")
+ct.focus <- c(ct.T, ct.mac, ct.tumor)
+
+# relative contribution of each L-R pair to CXCL
+netAnalysis_contribution(cellchat, signaling =pathway.show) 
+
+# 1) every significant CXCL L-R pair among T cemor cells
+netVisual_bubble(cellchat, signaling = pathway.show,
+                 sources.use = ct.focus, targets.use=ct.focus, 
+                 remove.isolate = TRUE, sort.by.target = TRUE, angle.x = 90,
+                 title.name = "CXCL L-R pairs: tumor")
+```
+```{r, fig.width=12, fig.height=6}
+# 2) what recruits T cells: all senders -> T cells (Cxcl9/10/13 -> Cxcr3, Cxcl16 -> Cxcr6, Cxcl12 -> Cxcr4)
+netVisual_bubble(cellchat, signaling = pathway.show, 
+                 targets.use = ct.T, remove.isolate = TRUE, angle.x = 90,
+                 title.name = "CXCL signaling to T cells")
+# 3) what macrophages/DCs and tumor cells send (to any receiver)
+netVisual_bubble(cellchat, signaling = pathway.show, 
+                 sources.use = c(ct.mac, ct.tumor), remove.isolate = TRUE, angle.x = 90,
+                 title.name = "CXCL signaling from macrophages/DCs and tumor")
+```
+```{r, fig.width=9, fig.height=9}
+# chord diagram, one sector per cell type, links colored by sender and labeled by L-R pair
+netVisual_chord_gene(cellchat, signaling = pathway.show, 
+                     sources.use = ct.focus, targets.use = ct.focus,
+                     lab.cex = 0.6, legend.pos.y=30) 
+# Show Cxcl signaling between cell types, indicating individual ligand-recetpor pairs
+df.cxcl <- subsetCommunication(cellchat, signaling = pathway.show)
+df.cxcl <- df.cxcl[df.cxcl$source %in% ct.focus & df.cxcl$target %in% ct.focus, ]
+df.cxcl[order(-df.cxcl$prob), c("source", "target", "ligand", "receptor", "prob", "pval")]
+```
+

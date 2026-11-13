@@ -1,0 +1,191 @@
+---
+title: "BPPNM_Cebpb_CUT&RUN"
+output: html_notebook
+---
+
+
+
+```{r}
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(viridis)
+library(GenomicRanges)
+#library(chromVAR) ## For FRiP analysis and differential analysis
+library(DESeq2) ## For differential analysis section
+library(ggpubr) ## For customizing figures
+library(corrplot) ## For correlation plot
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(org.Mm.eg.db)
+library(GenomeInfoDb)
+library(ChIPseeker)
+library(msigdbr)
+library(rGREAT)
+library(DT)
+library(openxlsx)
+```
+
+```{r}
+dir1 <- "~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/ATAC-seq CUTnRUN/BPPNM Cebpb CUTnRUN"
+data <- read_excel("~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/ATAC-seq CUTnRUN/BPPNM Cebpb CUTnRUN/Analysis/Number_of_peaks.xlsx")
+data <- read_excel("~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/ATAC-seq CUTnRUN/BPPNM Rela Stat3 CUTnRUN/Analysis/Number_of_peaks.xlsx",n_max=12)
+```
+
+```{r}
+data$Sample = factor(data$Sample,levels=c("Int2","Int2_Stim","CebpbKO","CebpbKO_Stim"))
+ggplot(data,aes(x=Sample,y=Peaks,fill=Sample))+geom_bar(stat="identity")+facet_wrap(~Antibody,scales="free_y") + #scale_x_discrete(limits=c("Int2","Int2_Stim","CebpbKO","CebpbKO_Stim")) +
+  theme(axis.text.x=element_text(angle=45, vjust=0.5,hjust=0.5))
+ggplot(data[data$Antibody=="Cebpb",],aes(x=Sample,y=Peaks_p8,fill=Sample))+geom_bar(stat="identity")+scale_x_discrete(limits=c("Int2","Int2_Stim","CebpbKO","CebpbKO_Stim")) +
+  facet_wrap(~Antibody,scales="free_y") + theme(axis.text.x=element_text(angle=45, vjust=0.5,hjust=0.5))
+```
+```{r}
+# Peak annotation using CHIPseeker
+all_peaks <- list.files(path = file.path(dir,"macs2"), pattern = "rmBL", full.names = TRUE)
+peak_list <- lapply(all_peaks, readPeakFile)
+annotate_list <- lapply(peak_list,function(peak){
+  annotatePeak(peak, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+})
+
+names(annotate_list) <- c("CebpbKO_Cebpb","CebpbKO_H3K27Ac","CebpbKO_Stim_Cebpb","CebpbKO_Stim_H3K27Ac","Int2_Cebpb","Int2_H3K27Ac","Int2_Stim_Cebpb","Int2_Stim_H3K27Ac")
+annotate_list <- annotate_list[c("Int2_H3K27Ac","Int2_Stim_H3K27Ac","CebpbKO_H3K27Ac","CebpbKO_Stim_H3K27Ac","Int2_Cebpb","Int2_Stim_Cebpb","CebpbKO_Cebpb","CebpbKO_Stim_Cebpb")]
+plotAnnoBar(annotate_list)
+```
+```{r}
+int2_cebpb <- readPeakFile(file.path(dir1,"macs2/Processed/Int2_Cebpb_peaks_rmKO.narrowPeak"))
+int2_cebpb_anno <- annotatePeak(int2_cebpb, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+int2_stim_cebpb <- readPeakFile(file.path(dir1,"macs2/Processed/Int2_Stim_Cebpb_peaks_rmKO.narrowPeak"))
+int2_stim_cebpb_anno <- annotatePeak(int2_stim_cebpb, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+```
+
+```{r}
+# GO enrichment analysis using rGREAT
+int2_cebpb <- peak_list[[5]]
+h_gene_sets = msigdbr(species="Mus musculus",category = "H")
+h_gene_sets = split(h_gene_sets$entrez_gene, h_gene_sets$gs_name)
+h_gene_sets = lapply(h_gene_sets, as.character)
+res_int2_cebpb <- great(int2_cebpb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_cebpb)
+```
+```{r}
+int2_cebpb_tb <- getEnrichmentTable(res_int2_cebpb)
+head(int2_cebpb_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_Cebpb")
+```
+```{r}
+int2_stim_cebpb <- peak_list[[7]]
+res_int2_stim_cebpb <- great(int2_stim_cebpb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_stim_cebpb)
+int2_stim_cebpb_tb <- getEnrichmentTable(res_int2_stim_cebpb)
+head(int2_stim_cebpb_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_Stim_Cebpb")
+```
+```{r}
+# Examine Cebpb peaks shared between Int2_Cebpb and Int2_Stim_Cebpb and corresponding genes
+int2_cebpb_intersect <- readPeakFile(file.path(dir,"macs2/Processed/Int2_Stim_Cebpb_intersect.narrowPeak"))
+anno_cebpb_intersect <- annotatePeak(int2_cebpb_intersect, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+# Examine gene set unique to Int2_Stim_Cebpb peaks 
+anno_cebpb_intersect_df <- as.data.frame(as.GRanges(anno_cebpb_intersect))
+anno_cebpb_intersect_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_cebpb_intersect_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+write.table(anno_cebpb_intersect_df,file.path(dir,"Analysis/anno_cebpb_intersect_df.txt"),sep="\t",quote=F,row.names = F)
+
+# Significant peaks unique to stimulation
+int2_cebpb_unique <- readPeakFile(file.path(dir,"macs2/Processed/Int2_Stim_Cebpb_unique.narrowPeak"))
+anno_cebpb_unique <- annotatePeak(int2_cebpb_unique, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+# Examine gene set unique to Int2_Stim_Cebpb peaks 
+anno_cebpb_unique_df <- as.data.frame(as.GRanges(anno_cebpb_unique))
+anno_cebpb_unique_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_cebpb_unique_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+write.table(anno_cebpb_unique_df,file.path(dir,"Analysis/anno_cebpb_unique_df.txt"),sep="\t",quote=F,row.names = F)
+```
+```{r}
+# Get gene lists for each pathway 
+res_int2_cebpb_tnfa <- as.data.frame(getRegionGeneAssociations(res_int2_cebpb, term_id="HALLMARK_TNFA_SIGNALING_VIA_NFKB"))
+res_int2_cebpb_hypoxia <- as.data.frame(getRegionGeneAssociations(res_int2_cebpb, term_id="HALLMARK_HYPOXIA"))
+res_int2_cebpb_il2 <- as.data.frame(getRegionGeneAssociations(res_int2_cebpb, term_id="HALLMARK_IL2_STAT5_SIGNALING"))
+res_int2_cebpb_tnfa$pathway <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+res_int2_cebpb_hypoxia$pathway <- "HALLMARK_HYPOXIA"
+res_int2_cebpb_il2$pathway <- "HALLMARK_IL2_STAT5_SIGNALING"
+res_int2_cebpb_il6 <- as.data.frame(getRegionGeneAssociations(res_int2_cebpb, term_id="HALLMARK_IL6_JAK_STAT3_SIGNALING"))
+res_int2_cebpb_il6$pathway <- "HALLMARK_IL6_JAK_STAT3_SIGNALING"
+res_int2_cebpb_genes <- rbind(res_int2_cebpb_tnfa,res_int2_cebpb_il2,res_int2_cebpb_il6,res_int2_cebpb_hypoxia)
+res_int2_cebpb_genes$annotated_genes <- as.character(res_int2_cebpb_genes$annotated_genes)
+res_int2_cebpb_genes$dist_to_TSS <- as.character(res_int2_cebpb_genes$dist_to_TSS)
+write.table(res_int2_cebpb_genes,file.path(dir1,"Analysis/res_int2_cebpb.txt"),sep="\t",quote=F,row.names = F)
+```
+```{r}
+# Generate 4 gene lists using GREAT RegionGeneAssociations (Int2_Cebpb, Int2_Stim_Cebpb, intersect, unique)
+intersect_genes <- unique(anno_cebpb_intersect_df$geneSymbol)
+unique_genes <- unique(anno_cebpb_unique_df$geneSymbol)
+res_cepbb_intersect <- great(int2_cebpb_intersect,h_gene_sets,"txdb:mm10",mode='oneClosest')
+res_cepbb_intersect_genes <- getRegionGeneAssociations(res_cepbb_intersect)
+cebpb_intersect_genes <- unique(as.character(unlist(res_cepbb_intersect_genes$annotated_genes)))
+# Unique genes
+res_cepbb_unique <- great(int2_cebpb_unique,h_gene_sets,"txdb:mm10",mode='oneClosest')
+res_cepbb_unique_genes <- getRegionGeneAssociations(res_cepbb_unique)
+cebpb_unique_genes <- unique(as.character(unlist(res_cepbb_unique_genes$annotated_genes)))
+# Int2_Cebpb and Int2_Stim_Cebpb
+res_int2_cebpb_table <- getRegionGeneAssociations(res_int2_cebpb)
+res_int2_cebpb_genes <- unique(as.character(unlist(res_int2_cebpb_table$annotated_genes)))
+res_int2_stim_cebpb_table <- getRegionGeneAssociations(res_int2_stim_cebpb)
+res_int2_stim_cebpb_genes <- unique(as.character(unlist(res_int2_stim_cebpb_table$annotated_genes)))
+# Write excel
+genesets <- list("Cebpb_intersect"=cebpb_intersect_genes, "Cebpb_unique"=cebpb_unique_genes,
+                 "Int2_Cebpb"= res_int2_cebpb_genes, "Int2_Stim_Cebpb"=res_int2_stim_cebpb_genes)
+write.xlsx(genesets,file.path(dir,"Analysis/Cebpb_peak_genesets.xlsx"),rowNames=F)
+write.table(res_int2_cebpb_genes,file.path(dir,"Analysis/res_int2_cebpb.txt"),sep="\t",quote=F,row.names = F,col.names=F)
+```
+
+```{r}
+# Check expression of intersect or stimulation-specific genes in vivo scRNA-seq, how does the expression of those genes compare between Int2 vs. Cebpb-KO in tumor cells, in macrophages?
+res_int2_cebpb_il6 <- as.data.frame(getRegionGeneAssociations(res_int2_stim_cebpb, term_id="HALLMARK_IL6_JAK_STAT3_SIGNALING"))
+res_int2_cebpb_il6$pathway <- "HALLMARK_IL6_JAK_STAT3_SIGNALING"
+```
+```{r}
+# Select the promoter regions only 
+res_int2_cebpb_table <- as.data.frame(as.GRanges(int2_cebpb_anno))
+# Add gene names
+res_int2_cebpb_table$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(res_int2_cebpb_table$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+res_int2_cebpb_promoter <- res_int2_cebpb_table[res_int2_cebpb_table$annotation %in% c("Promoter (<=1kb)","Promoter (1-2kb)","Promoter (2-3kb)"),]
+int2_cebpb_promoter_genes <- unique(res_int2_cebpb_promoter$geneSymbol)
+res_int2_stim_cebpb_table <- as.data.frame(as.GRanges(int2_stim_cebpb_anno))
+# Add gene names
+res_int2_stim_cebpb_table$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(res_int2_stim_cebpb_table$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+res_int2_stim_cebpb_promoter <- res_int2_stim_cebpb_table[res_int2_stim_cebpb_table$annotation %in% c("Promoter (<=1kb)","Promoter (1-2kb)","Promoter (2-3kb)"),]
+int2_cebpb_stim_promoter_genes <- unique(res_int2_stim_cebpb_promoter$geneSymbol)
+
+```
+```{r}
+# Annotate all TFs gene regions with Cebpb binding
+int2_cebpb_tfs <- intersect(epi_mouse, res_int2_cebpb_genes)
+int2_stim_cebpb_tfs <- intersect(epi_mouse, res_int2_stim_cebpb_genes)
+# Save to excel
+genesets <- list("Int2_Cebpb_TFs"=int2_cebpb_tfs, "Int2_Stim_Cebpb_TFs"=int2_stim_cebpb_tfs)
+write.xlsx(genesets,file.path(dir1,"Analysis/Cebpb_binding_TF_sites.xlsx"),rowNames=F)
+```
+
+```{r}
+# Which int2_cebpb genes also show increased H3K27Ac in Int2 vs. Cebpb-KO
+int2_cebpbko_h3k27ac <- readPeakFile(file.path(dir,"macs2/Processed/Int2_v_CebpbKO_H3K27Ac_peaks_rmBL.narrowPeak"))
+int2_cebpbko_h3k27ac <- annotatePeak(int2_cebpbko_h3k27ac, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+# Examine gene set unique to Int2_Stim_Cebpb peaks 
+int2_cebpbko_h3k27ac_df <- as.data.frame(as.GRanges(int2_cebpbko_h3k27ac))
+int2_cebpbko_h3k27ac_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(int2_cebpbko_h3k27ac_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+int2_cebpbko_h3k27ac_genes <- unique(int2_cebpbko_h3k27ac_df$geneSymbol)
+
+# Int2_cebpbko_stim_h3k27ac
+int2_cebpbko_stim_h3k27ac <- readPeakFile(file.path(dir,"macs2/Processed/Int2_Stim_v_CebpbKO_Stim_H3K27Ac_peaks_rmBL.narrowPeak"))
+int2_cebpbko_stim_h3k27ac <- annotatePeak(int2_cebpbko_stim_h3k27ac, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+# Examine gene set unique to Int2_Stim_Cebpb peaks 
+int2_cebpbko_stim_h3k27ac_df <- as.data.frame(as.GRanges(int2_cebpbko_stim_h3k27ac))
+int2_cebpbko_stim_h3k27ac_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(int2_cebpbko_stim_h3k27ac_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+int2_cebpbko_stim_h3k27ac_genes <- unique(int2_cebpbko_stim_h3k27ac_df$geneSymbol)
+
+# Get genes in Int2_Cebpb that show H3K27Ac enrichment, and Int2_Cebpb_Stim showing H3K27Ac enrichment
+int2_cebpb_h3_genes <- intersect(int2_cebpbko_h3k27ac_genes,res_int2_cebpb_genes)
+int2_cebpb_stim_h3_genes <- intersect(int2_cebpbko_stim_h3k27ac_genes,res_int2_stim_cebpb_genes)
+genesets <- list("Int2_Cebpb_H3K27Ac"=int2_cebpb_h3_genes, "Int2_Stim_Cebpb_H3K27Ac"=int2_cebpb_stim_h3_genes)
+write.xlsx(genesets,file.path(dir,"Analysis/Int2_Cebpb_binding_H3K27Ac_enrichment.xlsx"),rowNames=F)
+```
+
+```{r}
+# Differential analysis using rGREAT and DESeq2
+
+```
+

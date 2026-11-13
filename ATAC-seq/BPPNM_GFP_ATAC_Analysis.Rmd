@@ -1,0 +1,159 @@
+---
+title: "BPPNM GFP ATAC-seq Analysis"
+output: html_notebook
+---
+
+```{r}
+#rm(list=ls())
+library(tidyverse)
+library(plyr)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(DESeq2)
+#library(tximport)
+library(readxl)
+library("vsn")
+library(EnhancedVolcano)
+library(pheatmap)
+library(purrr)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(tracktables)
+library(clusterProfiler)
+library(ChIPseeker)
+library(RcisTarget)
+library(UpSetR)
+library(rGREAT)
+library(msigdbr)
+library(DT)
+set.seed(10)
+```
+
+1. Load datasets
+```{r}
+dir <- "~/Dropbox (Partners HealthCare)/Lab Work- Alexa Mitchell/ATAC-seq/BPPNM GFP Int2 EMT ATAC"
+meta <- read.table(file.path(dir,"Analysis/BPPNM_GFP_Meta.csv"), sep=",",header=T)
+meta$Condition <- factor(meta$Condition)
+rownames(meta) <- meta$Sample
+
+# Load Htseq counts output
+filenames <- list.files(path=file.path(dir,"Process/counts2/"),full.names=T)
+filenames_short <- gsub(".htseq.count","",list.files(path=file.path(dir,"Process/counts2/"),full.names=F))
+data1 <- read_tsv(filenames[1],col_names = c("id","Count"))
+data_all <- filenames %>% lapply(read_tsv,col_names=c("id","Count")) %>% 
+  purrr::reduce(full_join,by="id")
+colnames(data_all) <- c("id",filenames_short)
+data_all <- column_to_rownames(data_all,var="id")
+data_all <- data_all[1:(dim(data_all)[1]-5),]
+```
+2. Run DEseq
+2.1 Make DEseq object
+```{r}
+dds <- DESeqDataSetFromMatrix(data_all, colData = meta, design = ~Condition) # Start with 115743 peaks
+colnames(dds) <- meta$Sample
+keep <- apply(counts(dds), 1, max)  >= 50 # Keep columns where >= one sample >= 50 counts
+dds <- dds[keep,] # 80363 peaks remaining
+dds
+```
+2.2 Run DEseq
+```{r}
+dds <- DESeq(dds)
+res <- results(dds)
+resultsNames(dds)
+```
+
+```{r}
+res.BPPNM_EMT <- results(dds, contrast=c("Condition","Mes","Epi"), alpha=0.05, lfcThreshold = 1)
+summary(res.BPPNM_EMT)
+```
+```{r}
+saveRDS(dds, file.path(dir, "Analysis/BPPNM_GFP_EMT_ATAC_DEseq2.rds"))
+dds <- readRDS(file.path(dir, "Analysis/BPPNM_GFP_EMT_ATAC_DEseq2.rds"))
+```
+
+2.3 Run PCA and LFC shinkage
+```{r}
+# Data visualization using PCA
+vsd <- vst(dds, blind=F)
+plotPCA(vsd, intgroup=c("Condition"))
+meanSdPlot(assay(vsd))
+```
+```{r}
+resLFC <- lfcShrink(dds, coef="Condition_Mes_vs_Epi", type="apeglm")
+resLFC
+plotMA(res.BPPNM_EMT, ylim=c(-5,5))
+plotMA(resLFC, ylim=c(-5,5))
+```
+```{r}
+res.BPPNM_EMT <- res.BPPNM_EMT[order(res.BPPNM_EMT$log2FoldChange),]
+res.BPPNM_EMT
+summary(res.BPPNM_EMT)
+res.BPPNM_EMT_signif <- res.BPPNM_EMT[(abs(res.BPPNM_EMT$log2FoldChange)>1& !is.na(res.BPPNM_EMT$padj) &res.BPPNM_EMT$padj<0.05),]
+res.BPPNM_EMT_signif <- as.data.frame(res.BPPNM_EMT_signif)
+```
+3. Gene annotation for differential ATAC-seq and GO analysis 
+```{r}
+toOverLap <- promoters(TxDb.Mmusculus.UCSC.mm10.knownGene, 500, 500)
+res.BPPNM_EMT_over <- res.BPPNM_EMT[(!is.na(res.BPPNM_EMT$padj) & res.BPPNM_EMT$padj<0.05) & res.BPPNM_EMT %over% toOverLap, ]
+makebedtable(res.BPPNM_EMT,"BPPNM_Mes_vs_Epi.html",file.path(dir,"Analysis/"))
+```
+```{r}
+# Up .bed file
+all_peaks <- readPeakFile(file.path(dir,"Process/macs2/all_peaks_cat_sort_merge_peak.bed"))
+mes_peakup <- all_peaks[all_peaks$V4 %in% paste(rownames(res.BPPNM_EMT_signif[res.BPPNM_EMT_signif$log2FoldChange>0,]),""),]
+mes_peakdown <- all_peaks[all_peaks$V4 %in% paste(rownames(res.BPPNM_EMT_signif[res.BPPNM_EMT_signif$log2FoldChange<0,]),""),]
+write.table(mes_peakup,file.path(dir,"Analysis/mes_peak_up.bed"),sep="\t",quote=F,col.names = F,row.names = F)
+write.table(mes_peakdown,file.path(dir,"Analysis/mes_peak_down.bed"),sep="\t",quote=F,col.names = F,row.names = F)
+```
+
+```{r}
+anno_res.BPPNM_EMT <- annotatePeak(all_peaks, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_mes_up <- annotatePeak(mes_peakup, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_mes_down <- annotatePeak(mes_peakdown, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+# Visualize peak annotations
+plotAnnoPie(anno_mes_up)
+plotAnnoPie(anno_mes_down)
+upsetplot(anno_res.BPPNM_EMT)
+# GO enrich
+go1 <- enrichGO(as.data.frame(as.GRanges(anno_mes_up))$geneId, OrgDb = "org.Mm.eg.db", ont = "BP", maxGSSize = 5000)
+go2 <- enrichGO(as.data.frame(as.GRanges(anno_mes_down))$geneId, OrgDb = "org.Mm.eg.db", ont = "BP", maxGSSize = 5000)
+mf1 <- enrichGO(as.data.frame(as.GRanges(anno_mes_up))$geneId, OrgDb = "org.Mm.eg.db", ont = "MF", maxGSSize = 5000)
+mf2 <- enrichGO(as.data.frame(as.GRanges(anno_mes_up))$geneId, OrgDb = "org.Mm.eg.db", ont = "MF", maxGSSize = 5000)
+head(go1, 10) %>% dplyr::select(ID, Description, pvalue, p.adjust) %>% datatable(elementId = "GO_Mes")
+head(go2, 10) %>% dplyr::select(ID, Description, pvalue, p.adjust) %>% datatable(elementId = "GO_Epi")
+```
+
+3b. rGREAT enrichment analysis 
+```{r}
+h_gene_sets = msigdbr(species="Mus musculus",category = "H")
+h_gene_sets = split(h_gene_sets$entrez_gene, h_gene_sets$gs_name)
+h_gene_sets = lapply(h_gene_sets, as.character)
+res_mes_up <- great(mes_peakup,h_gene_sets,"txdb:mm10")
+res_mes_down <- great(mes_peakdown, h_gene_sets,"txdb:mm10")
+plotRegionGeneAssociations(res_mes_up)
+```
+```{r}
+mes_up_tb <- getEnrichmentTable(res_mes_up)
+mes_down_tb <- getEnrichmentTable(res_mes_down)
+head(mes_up_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Mes")
+head(mes_down_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Epi")
+write.table(as.data.frame(mes_up_tb), file=file.path(dir, "Analysis/rGREAT_mes_up.tsv"),quote=F, sep="\t")
+write.table(as.data.frame(mes_down_tb), file=file.path(dir, "Analysis/rGREAT_mes_down.tsv"),quote=F, sep="\t")
+```
+
+4. Motif analysis
+```{r}
+# Generate gene list from DEseq2, then analyze motifs
+geneList1 <- rownames(res.BPPNM_EMT_signif[res.BPPNM_EMT_signif$log2FoldChange>0,]) # Mes upregulated genes
+geneLists <- GSEABase::GeneSet(geneList1,setName="Mes_Up")
+motifRankings <- importRankings("~/Dropbox (Partners HealthCare)/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_10xFlex_Pilot2/pySCENIC/mm10_10kbp_up_10kbp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather")
+data(list="motifAnnotations_mgi")
+
+# Run RcisTarget
+motifEnrichmentTable_wGenes <- cisTarget(geneLists, motifRankings,
+                               motifAnnot=motifAnnotations)
+# RcisTarget takes in gene names, need to map peaks to genes first?
+```
+

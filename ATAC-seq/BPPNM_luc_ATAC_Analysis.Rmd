@@ -1,0 +1,267 @@
+---
+title: "ATAC-seq Analysis"
+output: html_notebook
+---
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(plyr); library(dplyr)
+library(readr)
+library(ggplot2)
+library(DESeq2)
+#library(tximport)
+library(readxl)
+library("vsn")
+library(EnhancedVolcano)
+library(pheatmap)
+library(purrr)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(tracktables)
+library(clusterProfiler)
+library(ChIPseeker)
+library(RcisTarget)
+library(UpSetR)
+library(rGREAT)
+library(msigdbr)
+library(DT)
+library(ChIPpeakAnno)
+set.seed(10)
+```
+
+1. Load datasets
+```{r}
+dir <- "~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/ATAC-seq CUTnRUN/BPPNM luc-mCherry Int2 ATAC"
+meta <- read.table(file.path(dir,"Analysis/BPPNM_luc_mCherry_Meta.csv"), sep=",",header=T)
+meta$Condition <- factor(meta$Condition)
+rownames(meta) <- meta$Sample
+
+# Load Htseq counts output
+filenames <- list.files(path=file.path(dir,"Process/counts2/"),full.names=T)
+filenames_short <- gsub(".htseq.count","",list.files(path=file.path(dir,"Process/counts2/"),full.names=F))
+data1 <- read_tsv(filenames[1],col_names = c("id","Count"))
+data_all <- filenames %>% lapply(read_tsv,col_names=c("id","Count")) %>% 
+  purrr::reduce(full_join,by="id")
+colnames(data_all) <- c("id",filenames_short)
+data_all <- column_to_rownames(data_all,var="id")
+data_all <- data_all[1:(dim(data_all)[1]-5),]
+```
+2. Run DEseq
+2.1 Make DEseq object
+```{r}
+dds <- DESeqDataSetFromMatrix(data_all, colData = meta, design = ~Condition) # Start with 410424 total peaks
+colnames(dds) <- meta$Sample
+keep <- apply(counts(dds), 1, max)  >= 50 # Keep columns where >= one sample >= 50 counts
+dds <- dds[keep,] # 309297 peaks remaining
+dds
+```
+2.2 Run DEseq
+```{r}
+dds <- DESeq(dds)
+res <- results(dds)
+resultsNames(dds)
+```
+
+```{r}
+res.BPPNM_EMT <- results(dds, contrast=c("Condition","Mes","Epi"), alpha=0.05, lfcThreshold = 1) #
+summary(res.BPPNM_EMT)
+```
+
+```{r}
+saveRDS(dds, file.path(dir, "Analysis/BPPNM_luc_mCherry_ATAC_DEseq2.rds"))
+dds <- readRDS(file.path(dir, "Analysis/BPPNM_luc_mCherry_ATAC_DEseq2.rds"))
+```
+
+2.3 Run PCA and LFC shinkage
+```{r}
+# Data visualization using PCA
+vsd <- vst(dds, blind=F)
+plotPCA(vsd, intgroup=c("Condition"))
+meanSdPlot(assay(vsd))
+```
+
+```{r}
+res.BPPNM_EMT <- res.BPPNM_EMT[order(res.BPPNM_EMT$log2FoldChange),]
+res.BPPNM_EMT
+summary(res.BPPNM_EMT)
+res.BPPNM_EMT_signif <- res.BPPNM_EMT0[(abs(res.BPPNM_EMT0$log2FoldChange)>0& !is.na(res.BPPNM_EMT0$padj) &res.BPPNM_EMT0$padj<0.05),]
+res.BPPNM_EMT_signif <- as.data.frame(res.BPPNM_EMT_signif) # 91039 peaks DE
+EnhancedVolcano(res.BPPNM_EMT, lab=rownames(res.BPPNM_EMT), x="log2FoldChange", y="padj", title= "BPPNM ATAC-seq Mes vs. Epi", xlim = c(-8,8), pointSize = 1, FCcutoff=1, labSize=4)
+```
+```{r}
+# Generate background file
+res.BPPNM_EMT0 <- results(dds, contrast=c("Condition","Mes","Epi"), alpha=0.05) #
+summary(res.BPPNM_EMT0)
+res.BPPNM_EMT_background <- res.BPPNM_EMT0[(!is.na(res.BPPNM_EMT0$padj) & res.BPPNM_EMT0$padj>0.05),]
+res.BPPNM_EMT_background <- as.data.frame(res.BPPNM_EMT_background)
+all_peaks <- readPeakFile(file.path(dir,"Process/macs2/all_peaks_cat_sort_merge_peak.bed"))
+background_peaks <- all_peaks[all_peaks$V4 %in% paste(rownames(res.BPPNM_EMT_background),""),]
+write.table(background_peaks,file.path(dir,"Analysis/background_peaks.bed"),sep="\t",quote=F,col.names = F,row.names = F)
+```
+
+3. Gene annotation for differential ATAC-seq and GO analysis 
+```{r}
+# Up .bed file
+#all_peaks <- read.table(file.path(dir,"Process/macs2/all_peaks_cat_sort_merge_peak.bed"),header = F)
+all_peaks <- readPeakFile(file.path(dir,"Process/macs2/all_peaks_cat_sort_merge_peak.bed"))
+mes_peakup <- all_peaks[all_peaks$V4 %in% paste(rownames(res.BPPNM_EMT_signif[res.BPPNM_EMT_signif$log2FoldChange>0,]),""),]
+mes_peakdown <- all_peaks[all_peaks$V4 %in% paste(rownames(res.BPPNM_EMT_signif[res.BPPNM_EMT_signif$log2FoldChange<0,]),""),]
+write.table(mes_peakup,file.path(dir,"Analysis/mes_peak_up.bed"),sep="\t",quote=F,col.names = F,row.names = F)
+write.table(mes_peakdown,file.path(dir,"Analysis/mes_peak_down_4.bed"),sep="\t",quote=F,col.names = F,row.names = F)
+# Read tables
+mes_peakup <- read_table(file.path(dir,"Analysis/mes_peak_up.bed"),col_names=F)
+mes_peakdown <- read_table(file.path(dir,"Analysis/mes_peak_down_4.bed"),col_names=F)
+```
+
+```{r}
+my_annotation = TxDb.Mmusculus.UCSC.mm10.knownGene
+anno_res.BPPNM_EMT <- annotatePeak(all_peaks, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_mes_up <- annotatePeak(mes_peakup, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_mes_down <- annotatePeak(mes_peakdown, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+# Add gene symbols
+mes_up_df <- as.data.frame(as.GRanges(anno_mes_up))
+mes_up_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(mes_up_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+mes_down_df <- as.data.frame(as.GRanges(anno_mes_down))
+mes_down_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(mes_down_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+# anno_promoter
+mes_up_promoter <- mes_up_df[mes_up_df$annotation %in% c("Promoter (<=1kb)","Promoter (1-2kb)","Promoter (2-3kb)"),]
+mes_down_promoter <- mes_down_df[mes_down_df$annotation %in% c("Promoter (<=1kb)","Promoter (1-2kb)","Promoter (2-3kb)"),]
+
+# Cebpb peaks
+anno_all_df <- as.data.frame(as.GRanges(anno_res.BPPNM_EMT))
+anno_all_df$geneSymbol <-  mapIds(org.Mm.eg.db, keys = as.character(anno_all_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+cebpb <- anno_all_df[anno_all_df$geneSymbol == "Cebpb",]
+# Match wtih gRanges object to get promoter region .bed files for motif analysis
+mes_peakup_promoter <- mes_peakup[mes_peakup$V4 %in% mes_up_promoter$V4,]
+mes_peakdown_promoter <- mes_peakdown[mes_peakdown$V4 %in% mes_down_promoter$V4,]
+write.table(mes_peakup_promoter,file.path(dir,"Analysis/mes_peakup_promoter.bed"),sep="\t",quote=F,col.names = F,row.names = F)
+write.table(mes_peakdown_promoter,file.path(dir,"Analysis/mes_peakdown_promoter.bed"),sep="\t",quote=F,col.names = F,row.names = F)
+
+# Enhancer peaks
+mes_up_enhancer <- mes_up_df[!(mes_up_df$annotation %in% c("Promoter (<=1kb)","Promoter (1-2kb)","Promoter (2-3kb)")),]
+mes_down_enhancer <- mes_down_df[!(mes_down_df$annotation %in% c("Promoter (<=1kb)","Promoter (1-2kb)","Promoter (2-3kb)")),]
+mes_peakup_enhancer <- mes_peakup[mes_peakup$V4 %in% mes_up_enhancer$V4,]
+mes_peakdown_enhancer <- mes_peakdown[mes_peakdown$V4 %in% mes_down_enhancer$V4,]
+write.table(mes_peakup_enhancer,file.path(dir,"Analysis/mes_peakup_enhancer.bed"),sep="\t",quote=F,col.names = F,row.names = F)
+write.table(mes_peakdown_enhancer,file.path(dir,"Analysis/mes_peakdown_enhancer.bed"),sep="\t",quote=F,col.names = F,row.names = F)
+
+# Visualize peak annotations
+plotAnnoPie(anno_mes_up)
+plotAnnoPie(anno_mes_down)
+plotAnnoPie(anno_res.BPPNM_EMT)
+upsetplot(anno_res.BPPNM_EMT)
+# GO enrich
+go1 <- enrichGO(as.data.frame(as.GRanges(anno_mes_up))$geneId, OrgDb = "org.Mm.eg.db", ont = "BP", maxGSSize = 5000)
+go2 <- enrichGO(as.data.frame(as.GRanges(anno_mes_down))$geneId, OrgDb = "org.Mm.eg.db", ont = "BP", maxGSSize = 5000)
+mf1 <- enrichGO(as.data.frame(as.GRanges(anno_mes_up))$geneId, OrgDb = "org.Mm.eg.db", ont = "MF", maxGSSize = 5000)
+mf2 <- enrichGO(as.data.frame(as.GRanges(anno_mes_up))$geneId, OrgDb = "org.Mm.eg.db", ont = "MF", maxGSSize = 5000)
+head(go1, 10) %>% dplyr::select(ID, Description, pvalue, p.adjust) %>% datatable(elementId = "GO_Mes")
+head(go2, 10) %>% dplyr::select(ID, Description, pvalue, p.adjust) %>% datatable(elementId = "GO_Epi")
+```
+
+3b. rGREAT enrichment analysis 
+```{r}
+h_gene_sets = msigdbr(species="Mus musculus",category = "H")
+h_gene_sets = split(h_gene_sets$entrez_gene, h_gene_sets$gs_name)
+h_gene_sets = lapply(h_gene_sets, as.character)
+res_mes_up <- great(mes_peakup,h_gene_sets,"txdb:mm10",mode='oneClosest')
+res_mes_down <- great(mes_peakdown, h_gene_sets,"txdb:mm10",mode="oneClosest")
+plotRegionGeneAssociations(res_mes_up)
+plotRegionGeneAssociations(res_mes_down)
+```
+```{r}
+mes_up_tb <- getEnrichmentTable(res_mes_up)
+mes_down_tb <- getEnrichmentTable(res_mes_down)
+head(mes_up_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Mes")
+head(mes_down_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Epi")
+write.table(as.data.frame(mes_down_tb), file=file.path(dir, "Analysis/rGREAT_mes_down.tsv"),quote=F, sep="\t")
+```
+5b. Identify Genes from these pathways
+```{r}
+# Do GO analysis on promoter-related regions only 
+res_mes_up_promoter <- great(mes_peakup_promoter,h_gene_sets,"txdb:mm10")
+res_mes_down_promoter <- great(mes_peakdown_promoter, h_gene_sets,"txdb:mm10")
+mes_up_promoter_tb <- getEnrichmentTable(res_mes_up_promoter)
+mes_up_promoter_tb <- mes_up_promoter_tb[order(mes_up_promoter_tb$fold_enrichment,decreasing=T),]
+mes_down_promoter_tb <- getEnrichmentTable(res_mes_down_promoter)
+mes_down_promoter_tb <- mes_down_promoter_tb[order(mes_down_promoter_tb$fold_enrichment,decreasing=T),]
+head(mes_up_promoter_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Mes_Promoter")
+head(mes_down_promoter_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Epi_Promoter")
+plotRegionGeneAssociations(res_mes_up_promoter)
+plotRegionGeneAssociations(res_mes_down_promoter)
+# 1-2 genes associated per region, find genes associated to regions in each pathway
+
+```
+
+5c. Which genes are in the Il6-Stat3 or Inflammatory response pathway?
+```{r}
+# get gene symbols from GREAT results
+hallmark_sets = msigdbr(species="Mus musculus",category = "H")
+Il6_pathway <- hallmark_sets[hallmark_sets$gs_name=="HALLMARK_IL6_JAK_STAT3_SIGNALING",]$gene_symbol
+inflammatory_pathway <- hallmark_sets[hallmark_sets$gs_name=="HALLMARK_INFLAMMATORY_RESPONSE",]$gene_symbol
+# Get genes with promoter in DE peaks
+il6_mes_up <- mes_up_df[mes_up_df$geneSymbol %in% Il6_pathway,]
+inflammatory_mes_up <- mes_up_df[mes_up_df$geneSymbol %in% inflammatory_pathway,]
+# Plot heatmap with labels of promoters
+il6_up_table <- as.data.frame(table(il6_mes_up$geneSymbol))
+il6_down_table <- as.data.frame(table(il6_mes_down$geneSymbol))
+il6_table <- merge(il6_up_table,il6_down_table,by="Var1",all=T)
+il6_table[is.na(il6_table)] <- 0
+il6_table$Mes_net <- il6_table$Freq.x-il6_table$Freq.y
+il6_table <- il6_table[order(il6_table$Mes_net, decreasing = T),]
+rownames(il6_table) <- il6_table$Var1
+il6_table <- il6_table[-c(1:3)]
+pheatmap(il6_table,cluster_rows = F,cluster_cols = F,fontsize=8,color = colorRampPalette(c("blue","white", "red"))(50),breaks=seq(-15,15,length.out=50))
+inflammatory_up_table <- as.data.frame(table(inflammatory_mes_up$geneSymbol))
+inflammatory_down_table <- as.data.frame(table(inflammatory_mes_down$geneSymbol))
+inflammatory_table <- merge(inflammatory_up_table,inflammatory_down_table,by="Var1",all=T)
+inflammatory_table[is.na(inflammatory_table)] <- 0
+inflammatory_table$Mes_net <- inflammatory_table$Freq.x-inflammatory_table$Freq.y
+inflammatory_table <- inflammatory_table[order(inflammatory_table$Mes_net,decreasing=T),]
+inflammatory_table <- inflammatory_table[c(1:60),]
+rownames(inflammatory_table) <- inflammatory_table$Var1
+inflammatory_table <- as.data.frame(inflammatory_table[-c(1:3)])
+pheatmap(inflammatory_table,cluster_cols=F,cluster_rows=F,color = colorRampPalette(c("blue","white", "red"))(50),breaks=seq(-50,50,length.out=50))
+il6_mes_down <- mes_down_df[mes_down_df$geneSymbol %in% Il6_pathway,]
+inflammatory_mes_down <- mes_down_df[mes_down_df$geneSymbol %in% inflammatory_pathway,]
+```
+
+```{r}
+# Calculate a transcriptional-accessibility score (averaged LFC of DE peaks or all peaks)
+significant_peaks <- rbind(mes_up_df,mes_down_df)
+significant_peaks$LFC <- res.BPPNM_EMT_signif[match(significant_peaks$V4,paste(rownames(res.BPPNM_EMT_signif),"")),]$log2FoldChange
+# Get peaks in Il6 pathway
+il6_peaks <- significant_peaks[significant_peaks$geneSymbol %in% Il6_pathway,c("geneSymbol","LFC")]
+inflammatory_peaks <- significant_peaks[significant_peaks$geneSymbol %in% inflammatory_pathway,c("geneSymbol","LFC")]
+# Calculate average LFC per gene
+il6_averageLFC <- aggregate(.~geneSymbol, data=il6_peaks, mean)
+plot_averageLFC <- function(peaks){
+  averageLFC <- aggregate(.~geneSymbol, data=peaks, mean)
+  averageLFC <- averageLFC[order(averageLFC$LFC, decreasing=T),]
+  averageLFC <- averageLFC[c(1:30,(dim(averageLFC)[1]-30):dim(averageLFC)[1]),]
+  rownames(averageLFC) <- averageLFC$geneSymbol
+  averageLFC<- averageLFC[-c(1)]
+  crange = max(abs(averageLFC$LFC))
+  pheatmap(averageLFC,cluster_rows = F,cluster_cols = F,fontsize=8,color = colorRampPalette(c("blue","white", "red"))(50),breaks=seq(-crange,crange,length.out=50))
+}
+plot_averageLFC(il6_peaks)
+```
+
+6. Next steps: HOMER analysis, Heatmaps
+```{r}
+library(httr)
+library(jsonlite)
+library(xml2)
+ 
+server <- "https://rest.ensembl.org"
+ext <- "/sequence/region/human/X:1000000..1000100:1?"
+ 
+r <- GET(paste(server, ext, sep = ""), content_type("text/plain"))
+ 
+stop_for_status(r)
+ 
+ 
+print(content(r))
+```
+

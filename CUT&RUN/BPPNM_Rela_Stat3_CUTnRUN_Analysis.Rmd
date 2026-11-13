@@ -1,0 +1,449 @@
+---
+title: "BPPNM Rela Stat3 CUT&RUN"
+output: html_notebook
+---
+
+
+```{r}
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(viridis)
+library(GenomicRanges)
+#library(chromVAR) ## For FRiP analysis and differential analysis
+library(DESeq2) ## For differential analysis section
+library(ggpubr) ## For customizing figures
+library(corrplot) ## For correlation plot
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(org.Mm.eg.db)
+library(GenomeInfoDb)
+library(ChIPseeker)
+library(msigdbr)
+library(rGREAT)
+library(DT)
+library(openxlsx)
+library(pheatmap)
+```
+```{r}
+dir <- "~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/ATAC-seq CUTnRUN/BPPNM Rela Stat3 CUTnRUN"
+```
+
+```{r}
+# Peak annotation using CHIPseeker
+all_peaks <- list.files(path = file.path(dir,"macs2"), pattern = "rmBL_filtered_p8", full.names = TRUE)
+peak_list <- lapply(all_peaks, readPeakFile)
+annotate_list <- lapply(peak_list,function(peak){
+  annotatePeak(peak, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+})
+
+names(annotate_list) <- c("Int2_IL6_Stat3","Int2_Rela","Int2_Stat3","Int2_TNFa_Rela","RelaKO_Rela","RelaKO_TNFa_Rela","Stat3KO_IL6_Stat3","Stat3KO_Stat3")
+annotate_list <- annotate_list[c("Int2_Rela","Int2_TNFa_Rela","RelaKO_Rela","RelaKO_TNFa_Rela","Int2_Stat3","Int2_IL6_Stat3","Stat3KO_Stat3","Stat3KO_IL6_Stat3")]
+plotAnnoBar(annotate_list)
+```
+
+
+```{r}
+# GO enrichment analysis using rGREAT
+int2_tnfa_rela <- peak_list[[4]]
+h_gene_sets = msigdbr(species="Mus musculus",category = "H")
+h_gene_sets = split(h_gene_sets$entrez_gene, h_gene_sets$gs_name)
+h_gene_sets = lapply(h_gene_sets, as.character)
+res_int2_tnfa_rela <- great(int2_tnfa_rela,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_tnfa_rela)
+```
+```{r}
+int2_tnfa_rela_tb <- getEnrichmentTable(res_int2_tnfa_rela)
+head(int2_tnfa_rela_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_TNFa_Rela")
+```
+```{r}
+int2_rela <- peak_list[[2]]
+res_int2_rela <- great(int2_rela,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_rela)
+int2_rela_tb <- getEnrichmentTable(res_int2_rela)
+head(int2_rela_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_Rela")
+```
+
+```{r}
+# Stat3
+int2_il6_stat3 <- peak_list[[1]]
+res_int2_il6_stat3 <- great(int2_il6_stat3,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_il6_stat3)
+int2_il6_stat3_tb <- getEnrichmentTable(res_int2_il6_stat3)
+head(int2_il6_stat3_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_IL6_Stat3")
+```
+```{r}
+# Cebpb - Rela overlap or nearby peaks
+int2_rela_cebpb_10kb <- readPeakFile(file.path(dir,"macs2/Rela_Cebpb/Int2_TNFa_Rela_rmKO_intersect_Cebpb_Stim_10kb.narrowPeak"))
+anno_rela_cebpb_10kb <- annotatePeak(int2_rela_cebpb_10kb, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+# Examine gene set unique to Int2_Stim_Cebpb peaks 
+anno_rela_10kb_df <- as.data.frame(as.GRanges(anno_rela_cebpb_10kb))
+anno_rela_10kb_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_rela_10kb_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+write.table(anno_rela_10kb_df,file.path(dir,"Analysis/anno_rela_cebpb_10kb_df.txt"),sep="\t",quote=F,row.names = F)
+rela_cebpb_10kb_genes <- unique(anno_rela_10kb_df$geneSymbol)
+```
+```{r}
+# Sort by gene annotation per pathway
+plotAnnoPie(anno_rela_cebpb_10kb)
+res_int2_rela_cebpb_10kb <- great(int2_rela_cebpb_10kb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+```
+
+```{r}
+res_int2_rela_cebpb_5kb <- great(int2_rela_cebpb_5kb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_rela_cebpb_5kb)
+int2_rela_cebpb_5kb_tb <- getEnrichmentTable(res_int2_rela_cebpb_5kb)
+head(int2_rela_cebpb_5kb_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_Rela")
+```
+```{r}
+# Annotate peaks
+int2_tnfa_rela <- readPeakFile(file.path(dir,"macs2/Rela_Cebpb/Int2_TNFa_Rela_peaks_rmKO.narrowPeak"))
+int2_tnfa_rela_anno = annotatePeak(int2_tnfa_rela, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+plotAnnoPie(int2_tnfa_rela_anno)
+anno_tnfa_rela_df <- as.data.frame(as.GRanges(int2_tnfa_rela_anno))
+anno_tnfa_rela_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_tnfa_rela_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+tnfa_rela_genes = unique(anno_tnfa_rela_df$geneSymbol)
+# Gene annotation using rGREAT
+res_int2_tnfa_rela <- great(int2_tnfa_rela,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_tnfa_rela)
+int2_tnfa_rela_tb <- getEnrichmentTable(res_int2_tnfa_rela)
+head(int2_tnfa_rela_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_TNFa_Rela")
+```
+```{r}
+dir2 = "~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/ATAC-seq CUTnRUN/BPPNM Cebpb CUTnRUN"
+int2_stim_cebpb <- readPeakFile(file.path(dir2,"macs2/Processed/Int2_Stim_Cebpb_peaks_rmKO_filtered_p8.narrowPeak"))
+int2_stim_cebpb_anno = annotatePeak(int2_stim_cebpb, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+plotAnnoPie(int2_stim_cebpb_anno)
+anno_stim_cebpb_df <- as.data.frame(as.GRanges(int2_stim_cebpb_anno))
+anno_stim_cebpb_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_stim_cebpb_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+stim_cebpb_genes = unique(anno_stim_cebpb_df$geneSymbol)
+# Overlapping target genes between Rela and Cebpb
+overlap_rela_cebpb_genes <- intersect(tnfa_rela_genes,stim_cebpb_genes)
+res_int2_stim_cebpb <- great(int2_stim_cebpb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_stim_cebpb)
+int2_stim_cebpb_tb <- getEnrichmentTable(res_int2_stim_cebpb)
+head(int2_stim_cebpb_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_Stim_Cebpb")
+```
+```{r}
+# Get gene lists for each pathway 
+res_int2_cebpb_tnfa <- as.data.frame(getRegionGeneAssociations(res_int2_stim_cebpb, term_id="HALLMARK_TNFA_SIGNALING_VIA_NFKB"))
+res_int2_cebpb_hypoxia <- as.data.frame(getRegionGeneAssociations(res_int2_stim_cebpb, term_id="HALLMARK_HYPOXIA"))
+res_int2_cebpb_il2 <- as.data.frame(getRegionGeneAssociations(res_int2_stim_cebpb, term_id="HALLMARK_IL2_STAT5_SIGNALING"))
+res_int2_cebpb_il6 <- as.data.frame(getRegionGeneAssociations(res_int2_stim_cebpb, term_id="HALLMARK_IL6_JAK_STAT3_SIGNALING"))
+res_int2_cebpb_tnfa$pathway <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+res_int2_cebpb_hypoxia$pathway <- "HALLMARK_HYPOXIA"
+res_int2_cebpb_il2$pathway <- "HALLMARK_IL2_STAT5_SIGNALING"
+res_int2_cebpb_il6$pathway <- "HALLMARK_IL6_JAK_STAT3_SIGNALING"
+res_int2_rela_cebpb_genes <- rbind(res_int2_cebpb_tnfa,res_int2_cebpb_il6,res_int2_cebpb_il2,res_int2_cebpb_hypoxia)
+res_int2_rela_cebpb_genes$annotated_genes <- as.character(res_int2_rela_cebpb_genes$annotated_genes)
+res_int2_rela_cebpb_genes$dist_to_TSS <- as.character(res_int2_rela_cebpb_genes$dist_to_TSS)
+res_int2_cebpb_genes_promoter <- res_int2_cebpb_genes[abs(as.numeric(res_int2_cebpb_genes$dist_to_TSS)) < 3000,]
+write.table(res_int2_cebpb_genes_promoter,file.path(dir,"Analysis/Int2_TNFa_Rela_Promoter_Pathways.txt"),sep="\t",quote=F,row.names = F)
+```
+```{r}
+# Make Heatmap 
+peaks_heatmap <- function(res_int2_cebpb_il6){
+il6_table <- as.data.frame(table(as.character(res_int2_cebpb_il6$annotated_genes)))
+il6_table <- il6_table[order(il6_table$Freq, decreasing = T),]
+rownames(il6_table) <- il6_table$Var1
+il6_table <- il6_table[-c(1)]
+pheatmap(il6_table,cluster_rows = F,cluster_cols = F,fontsize=8,color = colorRampPalette(c("white", "red"))(50))#,breaks=seq(-15,15,length.out=50))
+}
+peaks_heatmap(res_int2_cebpb_il6)
+```
+# Chi-squared test for independence
+```{r}
+contingency <- matrix(c(849,290,6094,12767),nrow=2,byrow=T)
+contingency <- matrix(c(5049,587,6389,12503),nrow=2,byrow=T) # 24528 total genes
+contingency <- matrix(c(4490,1137,4601,14300),nrow=2,byrow=T)
+dimnames(contingency) <- list(
+  Rela = c("Target", "NotTarget"),
+  Cebpb = c("Target", "NotTarget")
+)
+contingency
+f <- fisher.test(contingency, alternative = "two.sided")
+chi <- chisq.test(contingency)
+```
+2. Cebpb and Rela new data set 
+```{r}
+dir <- "~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/ATAC-seq CUTnRUN/BPPNM Cebpb Rela CUTnRUN"
+```
+```{r}
+# Peak annotation using CHIPseeker
+all_peaks <- list.files(path = file.path(dir,"macs2_final"), pattern = "rmBL_filtered", full.names = TRUE)
+file_names <- list.files(path = file.path(dir,"macs2_final"), pattern = "rmBL_filtered", full.names = F)
+sample_names <- sub("_dedup_peaks_rmBL_filtered_p8.narrowPeak", "", file_names)
+sample_names <- sub("_dedup_peaks_rmBL_filtered_p15.narrowPeak", "", sample_names)
+peak_list <- lapply(all_peaks, readPeakFile)
+num_peaks <- lapply(peak_list,length)
+num_peaks <- unlist(num_peaks)
+annotate_list <- lapply(peak_list,function(peak){
+  annotatePeak(peak, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+})
+
+names(annotate_list) <- sample_names
+sample_order <- c("Int2_Cebpb","CebpbKO_Cebpb","Int2_TNF_Cebpb",
+                  "Int2_TNF_IFNg_Cebpb","CebpbKO_TNF_IFNg_Cebpb",
+                  "Int2_Rela","RelaKO_Rela","Int2_TNF_Rela","RelaKO_TNF_Rela",
+                  "Int2_TNF_IFNg_Rela","RelaKO_TNF_IFNg_Rela")
+annotate_list <- annotate_list[sample_order]
+plotAnnoBar(annotate_list)
+```
+```{r}
+# Number of peaks
+num_peaks_df <- read.xlsx(file.path(dir,"Analysis/peak_numbers.xlsx"),rowNames = T,sheet="Peaks")
+#num_peaks_df <- data.frame(Samples = sample_names, Peaks = num_peaks)
+num_peaks_df$Samples = factor(num_peaks_df$Samples,levels=sample_order)
+num_peaks_df %>% ggplot(aes(x = Samples, y = Peaks, fill = Samples)) +
+    geom_bar(stat="identity") +
+    geom_jitter(width=0.1) +
+    theme_bw(base_size = 18) +
+    ylim(c(0,NA))+
+    theme(plot.title=element_text(hjust=0.5),axis.text.x=element_text(angle=90, vjust=0.5,hjust=0.5),axis.title.x=element_blank(),legend.position="none")+
+    ylab("# of Signifiant Peaks") +
+    xlab("") +
+    ggtitle("Peak number after de-duplication")
+write.table(num_peaks_df,file.path(dir,"Analysis/peak_numbers.txt"),sep="\t",row.names = T)
+```
+
+```{r}
+# GO enrichment analysis using rGREAT
+int2_Cebpb <- peak_list[[4]]
+h_gene_sets = msigdbr(species="Mus musculus",category = "H")
+h_gene_sets = split(h_gene_sets$entrez_gene, h_gene_sets$gs_name)
+h_gene_sets = lapply(h_gene_sets, as.character)
+res_Int2_Cebpb <- great(int2_Cebpb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_Int2_Cebpb)
+
+int2_Cebpb_tb <- getEnrichmentTable(res_Int2_Cebpb)
+head(int2_Cebpb_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_Cebpb")
+```
+
+```{r}
+int2_tnf_ifng_rela <- peak_list[[9]]
+res_int2_tnf_ifng_rela <- great(int2_tnf_ifng_rela,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_tnf_ifng_rela)
+int2_tnf_ifng_rela_tb <- getEnrichmentTable(res_int2_tnf_ifng_rela)
+head(int2_tnf_ifng_rela_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_tnf_ifng_Rela")
+```
+
+```{r}
+anno_tnf_ifng_cebpb_df <- as.data.frame(as.GRanges(annotate_list$Int2_TNF_IFNg_Cebpb))
+anno_tnf_ifng_cebpb_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_tnf_ifng_cebpb_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+anno_tnf_ifng_cebpb_df_promoter <- anno_tnf_ifng_cebpb_df[abs(as.numeric(anno_tnf_ifng_cebpb_df$distanceToTSS)) < 3000,]
+tnf_ifng_cebpb_promoter_genes = unique(anno_tnf_ifng_cebpb_df_promoter$geneSymbol)
+# Rela genes
+anno_tnf_ifng_rela_df <- as.data.frame(as.GRanges(annotate_list$Int2_TNF_IFNg_Rela))
+anno_tnf_ifng_rela_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_tnf_ifng_rela_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+anno_tnf_ifng_rela_df_promoter <- anno_tnf_ifng_rela_df[abs(as.numeric(anno_tnf_ifng_rela_df$distanceToTSS)) < 3000,]
+tnf_ifng_rela_promoter_genes = unique(anno_tnf_ifng_rela_df_promoter$geneSymbol)
+
+# Overlapping target genes between Rela and Cebpb
+overlap_rela_cebpb_genes <- intersect(tnf_ifng_rela_promoter_genes,tnf_ifng_cebpb_promoter_genes)
+```
+```{r}
+int2_Cebpb_peaks <- as.data.frame(peak_list[[4]])
+log10pvals <- 
+hist(int2_Cebpb_peaks$V8,col="skyblue", main="P-value Distribution", xlab="P-value",breaks=500,xlim=c(0,200))
+```
+3. Cebpb peaks with more stringent p-value cutoff (p>15)
+```{r}
+all_peaks <- list.files(path = file.path(dir,"macs2_rmKO"), pattern="peaks_rmKO" ,full.names = TRUE)
+file_names <- list.files(path = file.path(dir,"macs2_rmKO"), pattern = "peaks_rmKO", full.names = F)
+sample_names <- sub("_peaks_rmKO_p15.narrowPeak", "", file_names)
+sample_names <- sub("_peaks_rmKO_p8.narrowPeak", "", sample_names)
+peak_list <- lapply(all_peaks, readPeakFile)
+num_peaks <- lapply(peak_list,length)
+num_peaks <- unlist(num_peaks)
+annotate_list <- lapply(peak_list,function(peak){
+  annotatePeak(peak, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+})
+names(annotate_list) <- sample_names
+```
+
+```{r}
+# GO enrichment analysis using rGREAT
+int2_cebpb <- peak_list[[1]]
+res_int2_cebpb <- great(int2_cebpb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_cebpb)
+
+int2_cebpb_tb <- getEnrichmentTable(res_int2_cebpb)
+head(int2_cebpb_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_Cebpb")
+int2_tnf_cebpb <- peak_list[[3]]
+res_int2_tnf_cebpb <- great(int2_tnf_cebpb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+```
+
+```{r}
+# GO enrichment analysis using rGREAT
+int2_tnf_rela <- peak_list[[6]]
+res_int2_tnf_rela <- great(int2_tnf_rela,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_tnf_rela)
+
+int2_tnf_rela_tb <- getEnrichmentTable(res_int2_tnf_rela)
+head(int2_tnf_rela_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_TNFa_Rela")
+```
+
+4. Plot heatmaps of Il6-Stat3 and TNFa via NF-kB pathways
+```{r}
+int2_tnf_ifng_cebpb <- peak_list[[4]]
+res_int2_tnf_ifng_cebpb <- great(int2_tnf_ifng_cebpb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+# Get gene lists for each pathway 
+res_int2_cebpb_il6 <- as.data.frame(getRegionGeneAssociations(res_int2_tnf_ifng_cebpb, term_id="HALLMARK_IL6_JAK_STAT3_SIGNALING"))
+res_int2_cebpb_tnfa <- as.data.frame(getRegionGeneAssociations(res_int2_tnf_ifng_cebpb, term_id="HALLMARK_TNFA_SIGNALING_VIA_NFKB"))
+res_int2_cebpb_il6$pathway <- "HALLMARK_IL6_JAK_STAT3_SIGNALING"
+res_int2_cebpb_tnfa$pathway <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+res_int2_tnf_ifng_cebpb_genes <- rbind(res_int2_cebpb_il6,res_int2_cebpb_tnfa)
+
+res_int2_cebpb_tgfb <- as.data.frame(getRegionGeneAssociations(res_int2_tnf_cebpb, term_id="HALLMARK_TGF_BETA_SIGNALING"))
+res_int2_cebpb_tgfb_promoter <- res_int2_cebpb_tgfb[abs(as.numeric(res_int2_cebpb_tgfb$dist_to_TSS)) < 3000,]
+tnf_cebpb_tgfb_genes <- unique(as.character(res_int2_cebpb_tgfb_promoter$annotated_genes))
+
+res_int2_tnf_ifng_cebpb_genes$annotated_genes <- as.character(res_int2_tnf_ifng_cebpb_genes$annotated_genes)
+res_int2_tnf_ifng_cebpb_genes$dist_to_TSS <- as.character(res_int2_tnf_ifng_cebpb_genes$dist_to_TSS)
+res_int2_tnf_ifng_cebpb_genes_promoter <- res_int2_tnf_ifng_cebpb_genes[abs(as.numeric(res_int2_tnf_ifng_cebpb_genes$dist_to_TSS)) < 3000,]
+write.table(res_int2_tnf_ifng_cebpb_genes,file.path(dir,"Analysis/Int2_TNF_IFNg_Cebpb_Pathways.txt"),sep="\t",quote=F,row.names = F)
+```
+```{r}
+int2_tnf_ifng_cebpb_rela <- readPeakFile(file.path(dir,"macs2_rmKO/Int2_TNF_IFNg_Cebpb_intersect_Rela.narrowPeak"))
+res_int2_tnf_ifng_cebpb_rela <- great(int2_tnf_ifng_cebpb_rela,h_gene_sets,"txdb:mm10",mode='oneClosest')
+# Get gene lists for each pathway 
+res_int2_cebpb_rela_il6 <- as.data.frame(getRegionGeneAssociations(res_int2_tnf_ifng_cebpb_rela, term_id="HALLMARK_IL6_JAK_STAT3_SIGNALING"))
+res_int2_cebpb_rela_tnfa <- as.data.frame(getRegionGeneAssociations(res_int2_tnf_ifng_cebpb_rela, term_id="HALLMARK_TNFA_SIGNALING_VIA_NFKB"))
+res_int2_cebpb_rela_tgfb <- as.data.frame(getRegionGeneAssociations(res_int2_tnf_ifng_cebpb_rela, term_id="HALLMARK_TGF_BETA_SIGNALING"))
+res_int2_cebpb_rela_il6$pathway <- "HALLMARK_IL6_JAK_STAT3_SIGNALING"
+res_int2_cebpb_rela_tnfa$pathway <- "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+
+res_int2_rela_cebpb_genes <- rbind(res_int2_cebpb_rela_il6,res_int2_cebpb_rela_tnfa)
+res_int2_rela_cebpb_genes$annotated_genes <- as.character(res_int2_rela_cebpb_genes$annotated_genes)
+res_int2_rela_cebpb_genes$dist_to_TSS <- as.character(res_int2_rela_cebpb_genes$dist_to_TSS)
+res_int2_rela_cebpb_genes_promoter <- res_int2_rela_cebpb_genes[abs(as.numeric(res_int2_rela_cebpb_genes$dist_to_TSS)) < 3000,]
+cebpb_rela_il6_genes <- unique(res_int2_rela_cebpb_genes_promoter[res_int2_rela_cebpb_genes_promoter$pathway=="HALLMARK_IL6_JAK_STAT3_SIGNALING",]$annotated_genes)
+res_int2_cebpb_rela_tgfb_promoter <- res_int2_cebpb_rela_tgfb[abs(as.numeric(res_int2_cebpb_rela_tgfb$dist_to_TSS)) < 3000,]
+cebpb_rela_tgfb_genes <- unique(as.character(res_int2_cebpb_rela_tgfb_promoter$annotated_genes))
+write.table(cebpb_rela_il6_genes,file.path(dir,"Analysis/Cebpb_Rela_Il6_genes.txt"),quote=F,row.names = F,col.names=F)
+write.table(res_int2_rela_cebpb_genes,file.path(dir,"Analysis/Int2_TNFa_IFNg_Cebpb_Rela_Pathways.txt"),sep="\t",quote=F,row.names = F)
+```
+
+```{r}
+# Make Heatmap 
+peaks_heatmap <- function(res_int2_cebpb_il6){
+il6_table <- as.data.frame(table(as.character(res_int2_cebpb_il6$annotated_genes)))
+il6_table <- il6_table[il6_table$Var1 != 'c(`14825` = "Cxcl1", `20310` = "Cxcl2")',]
+il6_table <- il6_table[order(il6_table$Freq, decreasing = T),]
+rownames(il6_table) <- il6_table$Var1
+il6_table <- il6_table[-c(1)]
+pheatmap(il6_table,cluster_rows = F,cluster_cols = F,fontsize=8,color = colorRampPalette(c("white", "red"))(50))#,breaks=seq(-15,15,length.out=50))
+}
+peaks_heatmap(res_int2_cebpb_rela_il6)
+```
+5. Get int2_cebpb_rela genes
+```{r}
+int2_tnf_ifng_cebpb_rela <- readPeakFile(file.path(dir,"macs2_rmKO/Int2_TNF_IFNg_Cebpb_intersect_Rela.narrowPeak"))
+anno_int2_tnf_ifng_cebpb_rela <- annotatePeak(int2_tnf_ifng_cebpb_rela, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+anno_tnf_ifng_cebpb_rela_df <- as.data.frame(as.GRanges(anno_int2_tnf_ifng_cebpb_rela))
+anno_tnf_ifng_cebpb_rela_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_tnf_ifng_cebpb_rela_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+anno_tnf_ifng_cebpb_rela_df_promoter <- anno_tnf_ifng_cebpb_rela_df[abs(as.numeric(anno_tnf_ifng_cebpb_rela_df$distanceToTSS)) < 3000,]
+tnf_ifng_cebpb_rela_promoter_genes = unique(anno_tnf_ifng_cebpb_rela_df_promoter$geneSymbol)
+tnf_ifng_cebpb_rela_genes = unique(anno_tnf_ifng_cebpb_rela_df$geneSymbol)
+write.table(anno_tnf_ifng_cebpb_rela_df_promoter,file.path(dir,"Analysis/Anno_TNF_IFNg_Cebpb_Rela_Promoter.txt"),sep="\t",quote=F,row.names = F)
+# Rela genes
+anno_tnf_ifng_rela_df <- as.data.frame(as.GRanges(annotate_list$Int2_TNF_IFNg_Rela))
+anno_tnf_ifng_rela_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_tnf_ifng_rela_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+anno_tnf_ifng_rela_df_promoter <- anno_tnf_ifng_rela_df[abs(as.numeric(anno_tnf_ifng_rela_df$distanceToTSS)) < 3000,]
+tnf_ifng_rela_promoter_genes = unique(anno_tnf_ifng_rela_df_promoter$geneSymbol)
+
+# Overlapping target genes between Rela and Cebpb
+overlap_rela_cebpb_genes <- intersect(tnf_ifng_rela_promoter_genes,tnf_ifng_cebpb_promoter_genes)
+```
+
+6. Cebpb-bond TFs at promoters and enhancers
+```{r}
+# Epigenetic regulators
+dir2 <- "~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_PPNM_invivo_RNAseq"
+epigenetic <- read.table(file.path(dir2,"Databases/genes.csv"), sep=",", header = T)
+epigenes <- gsub("\\\t.*","", epigenetic$HGNC.approved.symbol.HGNC.approved.name.UniProt.ID..human..Pfam.domains.UniProt.ID..mouse..Function.Modification.Protein.complex.Target.entity.Product)
+tfs <- read_excel(file.path(dir2,"Databases/EMS118413-supplement-Supplementary_Table_1.xlsx"))
+tfs <- tfs$`Supplementary Table 1: TFs in the Human Tfome`
+epi_factors <- union(epigenes, tfs)
+```
+
+```{r}
+# Convert human symbols to list of mouse symbols
+matchMMUsymbol<-function(human_symbol){
+  dir = "~/Partners HealthCare Dropbox/Ning Guan/Documents/Code/codes_Davis"
+	map=read.table(file.path(dir,'src/Mouse_Human_GeneIDs_sub.txt'),sep=' ',header=T)
+	map_sor<-map[match(human_symbol,map$hsa_symbol),]
+	mouse<-map_sor$mmu_symbol
+	return(mouse)
+}
+mouse_tfs <- matchMMUsymbol(tfs)
+```
+```{r}
+# Cebpb-bond TFs at promoters and enhancers
+anno_int2_cebpb <- annotate_list$Int2_Cebpb
+anno_int2_cebpb_df <- as.data.frame(as.GRanges(anno_int2_cebpb))
+anno_int2_cebpb_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_int2_cebpb_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+
+anno_int2_tnf_ifng_cebpb <- annotate_list$Int2_TNF_IFNg_Cebpb
+anno_int2_tnf_ifng_cebpb_df <- as.data.frame(as.GRanges(anno_int2_tnf_ifng_cebpb))
+anno_int2_tnf_ifng_cebpb_df$geneSymbol <- mapIds(org.Mm.eg.db, keys = as.character(anno_int2_tnf_ifng_cebpb_df$geneId), column = "SYMBOL", keytype = "ENTREZID", multiVals = "first")
+
+int2_cebpb_tfs <- anno_int2_cebpb_df[anno_int2_cebpb_df$geneSymbol %in% mouse_tfs,]
+int2_cebpb_tnf_ifng_tfs <- anno_int2_tnf_ifng_cebpb_df[anno_int2_tnf_ifng_cebpb_df$geneSymbol %in% mouse_tfs,]
+
+# Get the TFs with Cebpb binding
+cebpb_tfs <- unique(int2_cebpb_tfs$geneSymbol) # n=840
+cebpb_tnf_ifng_tfs <- unique(int2_cebpb_tnf_ifng_tfs$geneSymbol) # n=705
+# Which ones are upregulated or downregulated in WT vs. Cebpb-KO Mes cells?
+cebpb_genes <- unique(anno_int2_cebpb_df$geneSymbol)
+cebpb_tnf_ifng_genes <- unique(anno_int2_tnf_ifng_cebpb_df$geneSymbol)
+cebpb_genes_all <- union(cebpb_genes,cebpb_tnf_ifng_genes)
+```
+6. Pathway analysis of Cebpb-Rela peaks and Cebpb-alone
+```{r}
+int2_tnf_ifng_cebpb_rela <- readPeakFile(file.path(dir,"macs2_rmKO/Int2_TNF_IFNg_Cebpb_intersect_Rela.narrowPeak"))
+res_int2_tnf_ifng_cebpb_rela <- great(int2_tnf_ifng_cebpb_rela,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_tnf_ifng_cebpb_rela)
+
+int2_tnf_ifng_cebpb_rela_tb <- getEnrichmentTable(res_int2_tnf_ifng_cebpb_rela)
+head(int2_tnf_ifng_cebpb_rela_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_TNFa_IFNg_Cebpb_Rela")
+```
+```{r}
+int2_tnf_ifng_cebpb_exclude_rela <- readPeakFile(file.path(dir,"macs2_rmKO/Int2_TNF_IFNg_Rela_exclude_Cebpb_10kb.narrowPeak"))
+res_int2_tnf_ifng_cebpb_exclude_rela <- great(int2_tnf_ifng_cebpb_exclude_rela,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_tnf_ifng_cebpb_exclude_rela)
+
+int2_tnf_ifng_cebpb_exclude_rela_tb <- getEnrichmentTable(res_int2_tnf_ifng_cebpb_exclude_rela)
+head(int2_tnf_ifng_cebpb_exclude_rela_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_TNFa_IFNg_Cebpb_Rela")
+```
+
+Compare Int2_Cebpb vs Int2_TNF_IFNg_Cebpb
+```{r}
+all_peaks <- list.files(path = file.path(dir,"macs2_rmKO/macs2_compare"), full.names = TRUE)
+peak_list <- lapply(all_peaks, readPeakFile)
+annotate_list <- lapply(peak_list,function(peak){
+  annotatePeak(peak, TxDb=TxDb.Mmusculus.UCSC.mm10.knownGene)
+})
+```
+```{r}
+# GO enrichment analysis using rGREAT
+int2_cebpb <- peak_list[[4]]
+res_int2_cebpb <- great(int2_cebpb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+plotRegionGeneAssociations(res_int2_cebpb)
+
+int2_cebpb_tb <- getEnrichmentTable(res_int2_cebpb)
+head(int2_cebpb_tb, 10) %>% dplyr::select(id, genome_fraction, observed_region_hits, fold_enrichment,mean_tss_dist,p_adjust_hyper) %>% datatable(elementId = "GO_Int2_Cebpb")
+```
+# Gene IFN response genes 
+```{r}
+int2_tnf_ifng_cebpb <- peak_list[[5]]
+res_int2_tnf_ifng_cebpb <- great(int2_tnf_ifng_cebpb,h_gene_sets,"txdb:mm10",mode='oneClosest')
+# Get gene lists for each pathway 
+res_int2_tnf_ifng_cebpb_ifn <- as.data.frame(getRegionGeneAssociations(res_int2_tnf_ifng_cebpb, term_id=c("HALLMARK_INTERFERON_ALPHA_RESPONSE","HALLMARK_INTERFERON_GAMMA_RESPONSE")))
+res_int2_tnf_ifng_cebpb_ifng <- as.data.frame(getRegionGeneAssociations(res_int2_tnf_ifng_cebpb, term_id="HALLMARK_INTERFERON_GAMMA_RESPONSE"))
+ifn_genes = unique(as.character(res_int2_tnf_ifng_cebpb_ifn$annotated_genes))
+res_int2_tnf_ifng_cebpb_ifn_promoter <- res_int2_tnf_ifng_cebpb_ifn[abs(as.numeric(res_int2_tnf_ifng_cebpb_ifn$dist_to_TSS))<3000,]
+ifn_promoter_genes = unique(as.character(res_int2_tnf_ifng_cebpb_ifn_promoter$annotated_genes))
+```
+```{r}
+
+```
+

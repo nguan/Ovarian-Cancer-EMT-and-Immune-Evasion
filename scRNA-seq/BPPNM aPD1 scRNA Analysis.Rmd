@@ -1,0 +1,1233 @@
+---
+title: "BPPNM aPD1 scRNA-seq"
+output: html_notebook
+---
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(reshape2)
+library(pheatmap)
+library(msigdbr)
+library(CellChat)
+#library(infercnv)
+library(stringr)
+library(readxl)
+library(RColorBrewer)
+library(openxlsx)
+library(harmony)
+library(fgsea)
+library(SeuratWrappers)
+#library(monocle3)
+library(ggrepel)
+library(SeuratBubblePlot)
+library(ppcor)
+library(scales)
+set.seed(10)
+```
+1. Load Data 
+```{r}
+dir <- "/Users/ningguan/Partners Healthcare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_aPD1_Flex"
+# Read data
+dirc <- "~/Dropbox (Partners Healthcare)/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_aPD1_Flex/Cellranger Output/Ctrl/outs/per_sample_outs"
+dirc2 <- "~/Dropbox (Partners Healthcare)/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_aPD1_Flex/scRNA-seq Batch 2/CellRanger/Ctrl/outs/per_sample_outs"
+bppnm.ctrl1 <- Read10X(data.dir = file.path(dirc, "sample1/count/sample_filtered_feature_bc_matrix"))
+bppnm.ctrl2 <- Read10X(data.dir = file.path(dirc, "sample2/count/sample_filtered_feature_bc_matrix"))
+bppnm.ctrl3 <- Read10X(data.dir = file.path(dirc, "sample3/count/sample_filtered_feature_bc_matrix"))
+bppnm.ctrl4 <- Read10X(data.dir = file.path(dirc, "sample4/count/sample_filtered_feature_bc_matrix"))
+bppnm.ctrl5 <- Read10X(data.dir = file.path(dirc2, "sample1/count/sample_filtered_feature_bc_matrix"))
+bppnm.ctrl6 <- Read10X(data.dir = file.path(dirc2, "sample2/count/sample_filtered_feature_bc_matrix"))
+bppnm.ctrl7 <- Read10X(data.dir = file.path(dirc2, "sample3/count/sample_filtered_feature_bc_matrix"))
+bppnm.ctrl8 <- Read10X(data.dir = file.path(dirc2, "sample4/count/sample_filtered_feature_bc_matrix"))
+
+
+bppnm1 <- CreateSeuratObject(counts=bppnm.ctrl1,min.features=200,project="Ctrl-1")
+bppnm2 <- CreateSeuratObject(counts=bppnm.ctrl2,min.features=200,project="Ctrl-2")
+bppnm3 <- CreateSeuratObject(counts=bppnm.ctrl3,min.features=200,project="Ctrl-3")
+bppnm4 <- CreateSeuratObject(counts=bppnm.ctrl4,min.features=200,project="Ctrl-4")
+bppnm5 <- CreateSeuratObject(counts=bppnm.ctrl5,min.features=200,project="Ctrl-5")
+bppnm6 <- CreateSeuratObject(counts=bppnm.ctrl6,min.features=200,project="Ctrl-6")
+bppnm7 <- CreateSeuratObject(counts=bppnm.ctrl7,min.features=200,project="Ctrl-7")
+bppnm8 <- CreateSeuratObject(counts=bppnm.ctrl8,min.features=200,project="Ctrl-8")
+```
+```{r}
+dirp <- "~/Dropbox (Partners Healthcare)/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_aPD1_Flex/Cellranger Output/aPD1/outs/per_sample_outs"
+dirp2 <- "~/Dropbox (Partners Healthcare)/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_aPD1_Flex/scRNA-seq Batch 2/CellRanger/aPD1/outs/per_sample_outs"
+bppnm.icb1 <- Read10X(data.dir = file.path(dirp, "sample1/count/sample_filtered_feature_bc_matrix"))
+bppnm.icb2 <- Read10X(data.dir = file.path(dirp, "sample2/count/sample_filtered_feature_bc_matrix"))
+bppnm.icb3 <- Read10X(data.dir = file.path(dirp, "sample3/count/sample_filtered_feature_bc_matrix"))
+bppnm.icb4 <- Read10X(data.dir = file.path(dirp, "sample4/count/sample_filtered_feature_bc_matrix"))
+bppnm.icb5 <- Read10X(data.dir = file.path(dirp2, "sample1/count/sample_filtered_feature_bc_matrix"))
+bppnm.icb6 <- Read10X(data.dir = file.path(dirp2, "sample2/count/sample_filtered_feature_bc_matrix"))
+bppnm.icb7 <- Read10X(data.dir = file.path(dirp2, "sample3/count/sample_filtered_feature_bc_matrix"))
+bppnm.icb8 <- Read10X(data.dir = file.path(dirp2, "sample4/count/sample_filtered_feature_bc_matrix"))
+
+icb1 <- CreateSeuratObject(counts=bppnm.icb1,min.features=200,project="PD1-1")
+icb2 <- CreateSeuratObject(counts=bppnm.icb2,min.features=200,project="PD1-2")
+icb3 <- CreateSeuratObject(counts=bppnm.icb3,min.features=200,project="PD1-3")
+icb4 <- CreateSeuratObject(counts=bppnm.icb4,min.features=200,project="PD1-4")
+icb5 <- CreateSeuratObject(counts=bppnm.icb5,min.features=200,project="PD1-5")
+icb6 <- CreateSeuratObject(counts=bppnm.icb6,min.features=200,project="PD1-6")
+icb7 <- CreateSeuratObject(counts=bppnm.icb7,min.features=200,project="PD1-7")
+icb8 <- CreateSeuratObject(counts=bppnm.icb8,min.features=200,project="PD1-8")
+
+bppnm.whole <- merge(bppnm1, y=c(bppnm2, bppnm3, bppnm4,bppnm5,bppnm6,bppnm7,bppnm8,icb1, icb2, icb3, icb4,icb5,icb6,icb7,icb8), add.cell.ids = c("Ctrl-1","Ctrl-2","Ctrl-3","Ctrl-4","Ctrl-5","Ctrl-6","Ctrl-7","Ctrl-8","PD1-1","PD1-2","PD1-3","PD1-4","PD1-5","PD1-6","PD1-7","PD1-8"), project = "BPPNM aPD1")
+bppnm.whole
+```
+2. Merge samples 
+```{r}
+# Add metadata
+sample <- as.data.frame(bppnm.whole$orig.ident)
+sample <- sample %>% mutate(conditions = ifelse(sample$`bppnm.whole$orig.ident` %in% c("Ctrl-1","Ctrl-2","Ctrl-3","Ctrl-4","Ctrl-5","Ctrl-6","Ctrl-7","Ctrl-8"),"Ctrl","PD1"))
+sample <- sample %>% mutate(mouse = substr(sample$`bppnm.whole$orig.ident`, nchar(sample$`bppnm.whole$orig.ident`), nchar(sample$`bppnm.whole$orig.ident`)))
+bppnm.whole[["Condition"]] <- sample$conditions
+bppnm.whole[["Mouse"]] <- sample$mouse
+```
+```{r}
+bppnm <- JoinLayers(bppnm.whole)
+allgenes = rownames(bppnm) # Can't do this because layers aren't merged
+gene_counts <- rowSums(GetAssayData(object = bppnm, layer = "count")[allgenes,]>0)
+genes_keep <- names(gene_counts[gene_counts>=10])
+bppnm.whole <- subset(bppnm.whole, features=genes_keep)
+bppnm.whole
+```
+
+3. QC, clustering, and cell type marker identification
+```{r}
+bppnm.whole[["percent.mt"]] <- PercentageFeatureSet(bppnm.whole, pattern = "^mt-")
+VlnPlot(bppnm.whole, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1 <- FeatureScatter(bppnm.whole, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(bppnm.whole, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+```{r}
+bppnm.whole <- subset(bppnm.whole, subset = nFeature_RNA>300 & percent.mt < 5 & nFeature_RNA < 11000) # 29862 cells
+bppnm.whole <- NormalizeData(object=bppnm.whole) # Normalize each sample separately
+bppnm.whole <- FindVariableFeatures(object=bppnm.whole)
+bppnm.whole <- JoinLayers(bppnm.whole) # Join counts into 1 Layer
+all.genes <- rownames(bppnm.whole)
+bppnm.whole <- ScaleData(object = bppnm.whole, features=all.genes)
+#saveRDS(bppnm.whole,file.path(dir,"Analysis/bppnm.whole.rds"))
+bppnm.whole <- RunPCA(object=bppnm.whole)
+```
+```{r}
+DimPlot(object=bppnm.whole, reduction="pca",group.by="orig.ident",shuffle=T)
+```
+```{r}
+bppnm.whole <- FindNeighbors(bppnm.whole, reduction="pca",dims=1:30)
+bppnm.whole <- FindClusters(bppnm.whole, reduction="pca",resolution=0.3) # Identified 14 Clusters
+bppnm.whole <- RunUMAP(bppnm.whole, dims=1:30,reduction="pca")
+plot1 <- DimPlot(bppnm.whole, reduction="umap",label=T,shuffle=T)+NoLegend()
+plot2 <- DimPlot(bppnm.whole, reduction="umap",group.by="orig.ident",shuffle=T)
+saveRDS(bppnm.whole,file.path(dir,"Analysis/bppnm.whole.rds"))
+bppnm.whole <- readRDS(file.path(dir, "Analysis/bppnm.whole.rds"))
+```
+```{r}
+bppnm.whole <- RunHarmony(bppnm.whole, "orig.ident",reduction.use="pca",plot_convergence=T) # Harmonize over sample ids
+DimPlot(object=bppnm.whole, reduction="harmony",group.by="orig.ident",shuffle=T)
+bppnm.whole <- FindNeighbors(bppnm.whole,reduction="harmony",dim=1:30)
+bppnm.whole <- FindClusters(bppnm.whole, reduction="harmony",resolution=0.25)
+bppnm.whole <- RunUMAP(bppnm.whole, dims=1:30, reduction="harmony",reduction.name="umap_harmony")
+p1 <- DimPlot(bppnm.whole, reduction="umap_harmony",label=T,shuffle=T)+NoLegend()
+p2 <- DimPlot(bppnm.whole, reduction="umap_harmony",group.by="orig.ident",shuffle=T)
+p3 <- DimPlot(bppnm.whole,reduction="umap_harmony",group.by="Condition",shuffle=T)
+p1+p2+p3
+bppnm.whole$EMT <- ifelse(bppnm.whole$celltype %in% c("Mes Cancer 1","Cycling Mes Cancer"),"Mesenchymal Cancer",ifelse(bppnm.whole$celltype %in% c("Epi Cancer 1","Cycling Epi Cancer"),"Epithelial Cancer",ifelse(bppnm.whole$celltype == "Epi Cancer 2","pEMT Cancer",as.character(bppnm.whole$celltype))))
+Idents(bppnm.whole) <- "EMT"
+Idents(bppnm.whole) <- "celltype"
+bppnm.whole$celltype <- ifelse(bppnm.whole$celltype == "Epi Cancer 2","pEMT Cancer",as.character(bppnm.whole$celltype))
+```
+```{r}
+bppnm.markers <- FindAllMarkers(bppnm.whole,min.pct=0.25,logfc.threshold = 0.25,only.pos=T)
+top10 <- bppnm.markers %>% group_by(cluster) %>%
+  slice_head(n=10) %>% ungroup()
+write.table(top10,file=file.path(dir,"Analysis/bppnm_whole_10markers.txt"),sep="\t",row.names=F)
+```
+```{r}
+# Label cell types
+new.cluster.ids <- c("Mes Cancer 1","Myeloid 1","Epi Cancer 1","CAFs","Cycling Mes Cancer","Cycling Epi Cancer","Epi Cancer 2","T Cells", "Endothelial", "Neutrophils","Cycling Myeloid","B cells","Pericytes","Muscle Cells")
+new.cluster.ids <- c("Epi Cancer 1","Myeloid 1","CAFs","Mes Cancer 1","Endothelial","T Cells","Cycling Epi Cancer","Cycling Mes Cancer", "Neutrophils","B Cells","pEMT Cancer","Muscle Cells","Cycling Myeloid","Pericytes")
+names(new.cluster.ids) <- levels(bppnm.whole)
+bppnm.whole <- RenameIdents(bppnm.whole, new.cluster.ids)
+DimPlot(bppnm.whole, reduction = "umap_harmony", label = TRUE,label.size=4,repel=T) + NoLegend()
+bppnm.whole$celltype <- Idents(bppnm.whole)
+bppnm.whole$Group <- paste(bppnm.whole$celltype,bppnm.whole$Condition)
+saveRDS(bppnm.whole, file.path(dir,"Analysis/bppnm.whole.rds"))
+bppnm.whole <- readRDS(file.path(dir,"Analysis/bppnm.whole.rds"))
+```
+```{r}
+# Set order of bubbleplot
+my_cols <- c("Mes Cancer 1"="#00A9FF","Cycling Mes Cancer"="#8494FF","pEMT Cancer"="#C77CFF","Epi Cancer 1"="#E38900","Cycling Epi Cancer"="#F8766D","Myeloid 1"="#C49A00","Cycling Myeloid"="#99A800","CAFs"="#53B400","Endothelial"="#00BC56","Neutrophils"="#00C094","T Cells"="#00BFC4","B Cells"="#FB61D7","Pericytes"="#00B6EB","Muscle Cells"="#FF66A8")
+DimPlot(bppnm.whole, reduction="umap_harmony",shuffle=T, label=T,label.size=4, cols=my_cols)+NoLegend()
+tumor <- subset(bppnm.whole,idents=c("Mes Cancer 1","Cycling Mes Cancer","pEMT Cancer","Epi Cancer 1","Cycling Epi Cancer"))
+tumor_cols <- c("Mes Cancer 1"="#00A9FF","Cycling Mes Cancer"="#8494FF","pEMT Cancer"="#C77CFF","Epi Cancer 1"="#E38900","Cycling Epi Cancer"="#F8766D")
+DimPlot(tumor, reduction="umap_harmony",shuffle=T, label=T,label.size=4, cols=tumor_cols)+NoLegend()
+bppnm.whole$celltype <- factor(bppnm.whole$celltype, levels = rev(c("Epi Cancer 1","Cycling Epi Cancer","pEMT Cancer","Mes Cancer 1","Cycling Mes Cancer","Myeloid 1","Cycling Myeloid","T Cells", "Neutrophils","B Cells","CAFs","Endothelial","Pericytes","Muscle Cells")))
+bppnm.whole <- UpdateSeuratObject(bppnm.whole)
+bubbleplot(bppnm.whole,features_plot = c("Epcam","Cdh1","Col6a2","Snai2","Twist1","Twist2","Zeb1","Krt5","Col17a1","Mki67","Ptprc","Cd68","S100a9","Csf1r","Cd3e","Cd8a","Igkc","Pdpn","Pecam1","Rgs5","Myo18b"),cluster_y=F,color="Blues",grouping_var = "celltype")
+DotPlot(bppnm.whole,features=c("Epcam","Cdh1","Col6a2","Snai2","Twist1","Twist2","Zeb1","Krt5","Col17a1","Mki67","Ptprc","Cd68","S100a9","Csf1r","Cd3e","Cd8a","Igkc","Pdpn","Pecam1","Rgs5","Myo18b"),cluster.idents=T)+theme(axis.text.x=element_text(angle=90, vjust=0.5,hjust=0.5))
+DotPlot(tumor,features=c("Cebpb","Il6"), cluster.idents=T,group.by="Group")+theme(axis.text.x=element_text(angle=90, vjust=0.5,hjust=0.5))
+# Chemokine expression 
+bubbleplot(bppnm.whole,features_plot = c("Ccl3","Ccl4","Ccl5","Ccr1","Ccr5","Cxcl16","Cxcr6","Csf1r"),cluster_y=T,color="Blues",grouping_var = "celltype")
+tumor.myeloid <- subset(bppnm.whole,idents=c("Mes Cancer 1","Cycling Mes Cancer","Epi Cancer 2","Epi Cancer 1","Cycling Epi Cancer","Myeloid 1","Cycling Myeloid"))
+bubbleplot(tumor.myeloid,features_plot = c("Cebpb","Cebpa","Cebpd","Cebpg","Cebpe","Cebpz","Cop1"),cluster_y=T,color="Blues",grouping_var = "celltype")
+DotPlot(tumor,features=c("Cebpb","Cebpa","Cebpd","Cebpg","Cebpe","Cebpz"), cluster.idents=T)+theme(axis.text.x=element_text(angle=45, vjust=0.5,hjust=0.5))
+bubbleplot(bppnm.whole,features_plot = c("Fcgr1","Csf1r"),cluster_y=T,color="Blues",grouping_var = "celltype")
+```
+```{r}
+# Tumor cell plots 
+new.cluster.ids <- c("Mes Cancer 1","Epi Cancer 1","Cycling Mes Cancer","Cycling Epi Cancer","pEMT Cancer")
+names(new.cluster.ids) <- levels(tumor)
+tumor <- RenameIdents(tumor, new.cluster.ids)
+tumor$subcluster <- Idents(tumor)
+# Rerun UMAP
+tumor <- RunUMAP(tumor,reduction="harmony",dim=1:30,reduction.name="umap_harmony")
+DimPlot(tumor, reduction="umap_harmony",shuffle=T, repel=T,label=T,label.size=5,cols=c("#00A9FF","#8494FF","#C77CFF","#CD9600","#F8766D"))+NoLegend()
+bubbleplot(tumor,features_plot = c("Epcam","Cdh1","Col6a2","Snai2","Twist1","Twist2","Zeb1","Krt5","Col17a1","Mki67"),cluster_y=T,color="Blues",grouping_var = "subcluster")
+tumor$subcluster <- factor(tumor$subcluster, levels = c('Mes Cancer 1', "Cycling Mes Cancer","pEMT Cancer","Epi Cancer 1","Cycling Epi Cancer"))
+Idents(tumor) <- tumor$subcluster
+bubbleplot(tumor,features_plot = c("Csf1","Il34","Cxcl16","Ccl5","H2-K1"),colors_use = "Blues")
+```
+
+4. Compare cell type representation across all samples and between Ctrl and aPD1
+```{r}
+mycolors <- colorRampPalette(brewer.pal(name="Paired", n = 12))(14)
+clusters <- as.data.frame(table(bppnm.whole[[c("Condition","celltype")]]))
+cancer_clusters <- c("Mes Cancer 1","Cycling Mes Cancer","pEMT Cancer","Epi Cancer 1","Cycling Epi Cancer")
+clusters.tumor <- as.data.frame(table(tumor[[c("Condition","celltype")]]))
+clusters.tumor <- clusters[clusters$celltype %in% cancer_clusters,]
+clusters.tumor$celltype <- factor(clusters.tumor$celltype,levels=cancer_clusters)
+ggplot(clusters.tumor, aes(fill=subcluster, y=Freq, x=Condition))+
+  geom_bar(position="fill",stat="identity")+labs(x="Sample",y="Fraction") +
+  scale_fill_manual(values=c("#00A9FF","#8494FF","#C77CFF","#CD9600","#F8766D"))
+ggplot(clusters.tumor, aes(fill=celltype, y=Freq, x=Condition))+
+  geom_bar(position="fill",stat="identity")+labs(x="Sample",y="Fraction") +
+  scale_fill_manual(values=c("#00A9FF","#8494FF","#C77CFF","#E38900","#F8766D"))
+```
+```{r}
+cluster_ident <- as.data.frame.matrix(table(tumor[[c("Condition","subcluster")]]))
+cluster.tumor <- as.data.frame.matrix(table(tumor[[c("orig.ident","subcluster")]]))
+cancer_ident <- cluster_ident[cancer_clusters]
+nb <- rowSums(cluster_ident) #min(nb)
+cluster_ident <- cluster_ident/nb
+cluster_ident
+# Subsample min(nb) of cells from each Sample
+cluster.sample <- c()
+for(i in 1:8){
+  x <- sample(1:5,size=min(nb),prob=cluster_ident[i,],replace=T)
+  cluster.sample <- c(cluster.sample,x)
+}
+cluster.pd1 <- c()
+for(i in 9:16){
+  x <- sample(1:5,size=min(nb),prob=cluster_ident[i,],replace=T)
+  cluster.pd1 <- c(cluster.pd1,x)
+}
+cluster.sample <- table(cluster.sample)
+cluster.pd1 <- table(cluster.pd1)
+cluster.all <- t(data.frame(Ctrl=as.vector(cluster.sample),PD1=as.vector(cluster.pd1),row.names=cancer_clusters))
+
+# Tumor cell-specific
+cluster_ident$Epi <- cluster_ident$`Epi Cancer 1`+cluster_ident$`Cycling Epi Cancer`+cluster_ident$`Epi Cancer 2`
+cluster_ident$Mes <- cluster_ident$`Mes Cancer 1`+cluster_ident$`Cycling Mes Cancer`
+clusters <-cluster_ident[c("Epi","Mes")]
+clusters <-clusters/rowSums(clusters)
+clusters$ident <- rownames(clusters)
+clusters$Condition <- c(rep("Ctrl",8),rep("PD1",8))
+clusters <- clusters[order(clusters$Condition,clusters$Mes),]
+clustersl <- melt(clusters,id=c("ident","Condition"))
+colnames(clustersl) <- c("Ident","Condition","celltype","Freq")
+clustersl$Ident <- factor(clustersl$Ident, levels=clusters$ident)
+# Run T-tests
+p_val = c()
+for(i in 1:dim(cluster_ident)[2]){# Ctrl vs. aPD1, proportion test
+  res <- prop.test(x=cluster_ident[1:2,i],n=rowSums(cluster_ident))
+  p_val <- c(p_val,res$p.value)
+}
+for(i in 1:dim(cluster_ident)[2]){# Ctrl vs. aPD1, pseudo-bulk
+  res <- t.test(cluster_ident[c(1:8),i],cluster_ident[9:16,i],var.equal=T)
+  p_val <- c(p_val,res$p.value)
+}
+clusters <- as.data.frame(t(cluster_ident))
+clusters <- clusters/colSums(clusters)
+clusters$p_val <- p_val
+clusters$signif <- clusters$p_val < 0.05/14
+cluster_ident # Cutoff = 0.004
+```
+```{r}
+# Epi and Mes tumor cell signatures
+cancer_clusters <- c("Mes Cancer 1","Cycling Mes Cancer","Epi Cancer 1","Epi Cancer 2","Cycling Epi Cancer")
+Idents(bppnm.whole) <- bppnm.whole$celltype
+tumor <- subset(bppnm.whole,idents=cancer_clusters)
+#tumor$Group <- paste(tumor$celltype, tumor$Condition)
+tumor.markers <- FindAllMarkers(tumor, logfc.threshold = 0.25, min.pct = 0.25, only.pos = T)
+top10.tumor <- tumor.markers %>% group_by(cluster) %>% slice_head(n=10) %>% ungroup()
+DoHeatmap(tumor,features=top10.tumor$gene,group.by="Group",size=4)
+```
+
+```{r}
+bubbleplot(tumor,features_plot = c("Cebpb","Runx2","Arnt","Tead1","Xbp1"),cluster_y=T,color="Blues",grouping_var = "celltype")
+```
+
+
+```{r}
+pEMT.markers <- FindMarkers(tumor, ident.1="pEMT Cancer",ident.2="Epi Cancer 1")
+# Epi clusters
+epi.markers <- FindMarkers(tumor, ident.1=c("Epi Cancer 1","Cycling Epi Cancer"),ident.2=c("Mes Cancer 1", "Cycling Mes Cancer","Epi Cancer 2","Mes Cancer 2"),logfc.threshold=0.5, min.pct = 0.25)
+epi.cycling.markers <- FindMarkers(tumor, ident.1="Epi Cancer 1",ident.2="Cycling Epi Cancer",logfc.threshold=0.5, min.pct = 0.25)
+# Epi cancer 2?
+epi2.markers <- FindMarkers(tumor, ident.1="Epi Cancer 2",ident.2=c("Epi Cancer 1","Cycling Epi Cancer"),logfc.threshold=0.5, min.pct = 0.25)
+# Mes clusters
+mes.markers <- FindMarkers(tumor, ident.1=c("Mes Cancer 1","Cycling Mes Cancer"),ident.2=c("Epi Cancer 1", "Cycling Epi Cancer"),logfc.threshold=0.25, min.pct = 0.25)
+mes.cycling.markers <- FindMarkers(tumor, ident.1="Mes Cancer 1",ident.2="Cycling Mes Cancer", logfc.threshold=0.5, min.pct=0.25)
+# Order genes by logfc
+epi.markers <- epi.markers[order(epi.markers$avg_log2FC),]
+epi.markers <- epi.markers[epi.markers$p_val_adj < 0.05,]
+epi.cycling.markers <- epi.cycling.markers[order(epi.cycling.markers$avg_log2FC),]
+epi.cycling.markers <- epi.cycling.markers[epi.cycling.markers$p_val_adj < 0.05,]
+epi2.markers <- epi2.markers[order(epi2.markers$avg_log2FC),]
+epi2.markers <- epi2.markers[epi2.markers$p_val_adj < 0.05,]
+mes.markers <- mes.markers[order(mes.markers$avg_log2FC),]
+mes.markers <- mes.markers[mes.markers$p_val_adj < 0.05,]
+mes.cycling.markers <- mes.cycling.markers[order(mes.cycling.markers$avg_log2FC),]
+mes.cycling.markers <- mes.cycling.markers[mes.cycling.markers$p_val_adj < 0.05,]
+# Save DEG lists in excel
+genesets <- list("Epi_1_Epi_Cycling_vs_All"=epi.markers, "Epi_1_vs_Epi_Cycling"=epi.cycling.markers,
+                 "Epi_2_vs_Epi_1"= epi2.markers, "Mes_1_Mes_Cycling_vs_All"=mes.markers,
+                 "Mes_1_vs_Mes_Cycling"=mes.cycling.markers)
+write.xlsx(genesets,file.path(dir,"Analysis/Tumor_Clusters_DGE.xlsx"),rowNames=T)
+```
+6. GSEA Analysis
+```{r}
+# GSEA analysis
+tmp1 <-which(mes.markers$avg_log2FC>0)
+mes.markers<-mes.markers[tmp1,]
+
+# Get gmt file
+mouse_gene_sets = msigdbr(species = "Mus musculus")
+msigdbr_collections()
+mouse_hallmark = mouse_gene_sets %>% dplyr::filter(gs_cat == "H")
+gene_sets = split(x=mouse_hallmark$gene_symbol,f=mouse_hallmark$gs_name)
+```
+```{r}
+EMT.markers <- FindMarkers(tumor, ident.1="Mes Cancer 1",ident.2="Epi Cancer 1",min.pct=0.25,logfc.threshold=0.25)
+cyclingEMT.markers <- FindMarkers(tumor, ident.1="Cycling Mes Cancer",ident.2="Cycling Epi Cancer",min.pct=0.25,logfc.threshold=0.25)
+cyclingEMT1.markers <- FindMarkers(tumor, ident.1="Cycling Mes Cancer",ident.2="Epi Cancer 1",min.pct=0.25,logfc.threshold=0.25)
+epi2.markers <- FindMarkers(tumor, ident.1="Epi Cancer 2",ident.2="Epi Cancer 1",min.pct=0.25,logfc.threshold=0.25)
+prepdf <- function(df){
+  dfsub <- df[order(df$avg_log2FC),]
+  return(dfsub[dfsub$p_val_adj < 0.05,])
+}
+EMT.markers <- prepdf(EMT.markers)
+cyclingEMT.markers <- prepdf(cyclingEMT.markers)
+cyclingEMT1.markers <- prepdf(cyclingEMT1.markers)
+epi2.markers <- prepdf(epi2.markers)
+genesets <- list("Mes_1_vs_Epi_1"=EMT.markers, "Cycling_Mes_vs_Cycling_Epi"=cyclingEMT.markers, "Cycling_Mes_vs_Epi_1"=cyclingEMT1.markers,"Epi_2_vs_Epi_1"=epi2.markers)
+write.xlsx(genesets,file=file.path(dir, "Analysis/gene_lists_for_LISA.xlsx"), rowNames=T)
+```
+
+```{r}
+#mes.markers <- FindMarkers(tumor, ident.1=c("Mes Cancer 1","Cycling Mes Cancer"),ident.2=c("Epi Cancer 1", "Cycling Epi Cancer","Epi Cancer 2","Mes Cancer 2"))
+#epi.markers <- FindMarkers(tumor, ident.1=c("Epi Cancer 1","Cycling Epi Cancer"),ident.2=c("Mes Cancer 1", "Cycling Mes Cancer","Epi Cancer 2","Mes Cancer 2"))
+#epi.cycling.markers <- FindMarkers(tumor, ident.1="Epi Cancer 1",ident.2="Cycling Epi Cancer")
+#epi2.markers <- FindMarkers(tumor, ident.1="Epi Cancer 2",ident.2=c("Epi Cancer 1"))
+mes.cycling.markers <- FindMarkers(tumor, ident.1="Mes Cancer 1",ident.2="Cycling Mes Cancer")
+tmp_rank<-mes.cycling.markers$avg_log2FC
+names(tmp_rank)<-rownames(mes.cycling.markers)
+# Run fgsea
+fgseaRes = fgsea(pathways=gene_sets,stats=tmp_rank, minSize=15,maxSize=500,eps=0.0)
+head(fgseaRes[order(pval),])
+topPathwaysUp <- fgseaRes[ES > 0][head(order(pval), n=10), pathway]
+topPathwaysDown <- fgseaRes[ES < 0][head(order(pval), n=10), pathway]
+topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+plotGseaTable(gene_sets[topPathways], tmp_rank, fgseaRes, gseaParam=0.5)
+```
+```{r}
+# Avg tumor 
+avg.tumor <- AggregateExpression(tumor,return.seurat = T)
+tumor.matrix <- as.data.frame(t(FetchData(avg.tumor, vars=mes.markers[1:9], layer="fscale.data")))
+heatmap1 <- pheatmap(tumor.matrix,
+         color = colorRampPalette(c("navy", "white", "red"))(50),
+         size=4,cluster_rows=T,fontsize=8)
+row_1 <- heatmap1$tree_row$order
+col_1 <- heatmap1$tree_col$order
+tumor.mes <- as.data.frame(t(FetchData(avg.tumor, vars=epi.markers, layer="scale.data")))
+tumor.mes <- tumor.mes[col_1]
+pheatmap(tumor.mes,
+         color = colorRampPalette(c("navy", "white", "red"))(50),
+         size=4,cluster_rows=T,fontsize=8,cluster_cols=F)
+
+```
+5. Epithelial and Messenchymal tumor cell subclustering
+```{r}
+epi <- subset(bppnm.whole,idents=c("Epi Cancer 1","Cycling Epi Cancer","Epi Cancer 2")) # 18,117 cells
+epi <- RunUMAP(epi,reduction="harmony",dim=1:30,reduction.name="umap_harmony")
+epi <- FindNeighbors(epi, reduction="harmony",dim=1:30)
+epi <- FindClusters(epi,reduction="harmony",resolution=0.3) # 6 subclusters
+p1 <- DimPlot(epi,reduction="umap_harmony",shuffle=T,label=T,label.size=5)+NoLegend()
+p2 <- DimPlot(epi, reduction="umap_harmony",group.by="Condition",shuffle=T)
+p1+p2
+# Find markers
+epi.markers <- FindAllMarkers(epi, logfc.threshold = 0.5,min.pct=0.25,only.pos=T)
+epi.markers <- epi.markers[epi.markers$p_val_adj<0.05,]
+top10.epi <- epi.markers %>% group_by(cluster) %>%
+  slice_head(n=10) %>% ungroup()
+write.table(top10.epi,file=file.path(dir,"Analysis/bppnm_epi_10markers.txt"),sep="\t",row.names=F)
+DoHeatmap(epi,features=top10.epi$gene)
+VlnPlot(epi, features=c("Epcam","Cdh1","Mki67","Col17a1","Cd44","Krt5"))
+write.table(epi.markers, file=file.path(dir,"Analysis/bppnm_epi_allmarkers.txt"),sep="\t",row.names=F)
+
+# Name subclusters
+new.cluster.ids <- c("Epi Cancer 1","Epi Cancer 2","Cycling Epi Cancer","pEMT Cancer 1","Epi Cancer 3","pEMT Cancer 2")
+names(new.cluster.ids) <- levels(epi)
+epi <- RenameIdents(epi, new.cluster.ids)
+epi$subcluster <- Idents(epi)
+saveRDS(epi,file.path(dir, "Analysis/epi_cancer.rds"))
+epi <- readRDS(file.path(dir, "Analysis/epi_cancer.rds"))
+```
+```{r}
+mes <- subset(bppnm.whole,idents=c("Mes Cancer 1","Cycling Mes Cancer")) # 18,350 cells
+mes <- RunUMAP(mes,reduction="harmony",dim=1:30,reduction.name="umap_harmony")
+mes <- FindNeighbors(mes, reduction="harmony",dim=1:30)
+mes <- FindClusters(mes,reduction="harmony",resolution=0.2) # 9 subclusters
+p1 <- DimPlot(mes,reduction="umap_harmony",shuffle=T,label=T,label.size=5)+NoLegend()
+p2 <- DimPlot(mes, reduction="umap_harmony",group.by="Condition",shuffle=T)
+p1+p2
+mes.markers <- FindAllMarkers(mes, logfc.threshold = 0.5,min.pct=0.25,only.pos=T)
+mes.markers <- mes.markers[mes.markers$p_val_adj<0.05,]
+top10.mes <- mes.markers %>% group_by(cluster) %>%
+  slice_head(n=10) %>% ungroup()
+write.table(top10.mes,file=file.path(dir,"Analysis/bppnm_mes_10markers.txt"),sep="\t",row.names=F)
+DoHeatmap(mes, features=top10.mes$gene)
+write.table(mes.markers, file=file.path(dir,"Analysis/bppnm_mes_allmarkers.txt"),sep="\t",row.names=F)
+
+# Name Mes subclusters
+new.cluster.ids <- c("Mes Cancer 1","Cycling Mes Cancer","Mes Cancer 2","Mes Cancer 3","Mes Cancer 4")
+names(new.cluster.ids) <- levels(mes)
+mes <- RenameIdents(mes, new.cluster.ids)
+mes$subcluster <- Idents(mes)
+saveRDS(mes, file.path(dir,"Analysis/mes_cancer.rds"))
+mes <- readRDS(file.path(dir, "Analysis/mes_cancer.rds"))
+```
+```{r}
+# Label tumor object with subclusters, plot EMT markers and Immune-related DE genes
+cancer_clusters <- c("Mes Cancer 1","Cycling Mes Cancer","Epi Cancer 1","Epi Cancer 2","Cycling Epi Cancer")
+tumor <- subset(bppnm.whole,idents=cancer_clusters)
+# Transfer labels 
+epi_df <- epi@meta.data[c("orig.ident","subcluster")]
+mes_df <- mes@meta.data[c("orig.ident","subcluster")]
+merged_df <- rbind(epi_df,mes_df)
+tumor$subcluster <- merged_df$subcluster[match(rownames(tumor@meta.data),rownames(merged_df))]
+```
+
+```{r}
+matchMMUsymbol<-function(human_symbol){
+  dir = "~/Dropbox (Partners HealthCare)/Documents/Code"
+	map=read.table(file.path(dir,'codes_Davis/src/Mouse_Human_GeneIDs_sub.txt'),sep=' ',header=T)
+	map_sor<-map[match(human_symbol,map$hsa_symbol),]
+	mouse<-map_sor$mmu_symbol
+	return(mouse)
+}
+matchMMUsymbol<-function(mouse_symbol){
+  dir = "~/Dropbox (Partners HealthCare)/Documents/Code"
+	map=read.table(file.path(dir,'codes_Davis/src/Mouse_Human_GeneIDs_sub.txt'),sep=' ',header=T)
+	map_sor<-map[match(mouse_symbol,map$mmu_symbol),]
+	mouse<-map_sor$hsa_symbol
+	return(human)
+}
+```
+
+```{r}
+# Add EMT scores
+emt.markers <- read_excel("~/Dropbox (Partners HealthCare)/Lab Work- Alexa Mitchell/RNA_seq/Lyer_scRNA_seq/EMT markers AG edits.xlsx")
+epi.markers <- emt.markers$`Epithelial markers`[1:16]
+mes.markers <- emt.markers$`Mesenchymal markers`[1:38]
+epi.markers <- matchMMUsymbol(epi.markers)
+mes.markers <- matchMMUsymbol(mes.markers)
+```
+```{r}
+tumor <- AddModuleScore(tumor, features=list(epi.markers),ctrl=10,name="Epithelial")
+tumor <- AddModuleScore(tumor,feature=list(mes.markers),ctrl=10,name="Mesenchymal")
+new.cluster.ids <- c("Mes Cancer 1","Epi Cancer 1","Cycling Mes Cancer","Cycling Epi Cancer","pEMT Cancer")
+names(new.cluster.ids) <- levels(tumor)
+tumor <- RenameIdents(tumor, new.cluster.ids)
+tumor$celltype <- Idents(tumor)
+# bubbleplot
+bubbleplot(tumor,features_plot = c("Jun","Junb","Jund","Fos","Fosb","Fosb2","Fosl1","Fosl2","Atf1","Atf2","Atf3","Atf4"),colors_use = "Blues",cluster_y=T)
+saveRDS(tumor,file.path(dir, "Analysis/tumor.rds"))
+tumor <- readRDS(file.path(dir,"Analysis/tumor.whole.rds"))
+tumor@active.ident <- factor(tumor@active.ident, 
+                            levels=c("Cycling Epi Cancer","Epi Cancer 1","pEMT Cancer","Cycling Mes Cancer","Mes Cancer 1"))
+bubbleplot(tumor, features_plot=c("Cebpa","Cebpb","Arnt","Xbp1"),colors_use="Blues",cluster_y=T)
+bubbleplot(tumor, features_plot=c("Cebpb","Neurod2","Yap1","Runx2","Myod1","Kmt2b","Fosl2","Nr6a1","Junb","Med1"),colors_use="Blues",cluster_y=T)
+bubbleplot(tumor, features_plot=c("Fosl1","Csf1","Spp1","Il34","Ccl5"),colors_use="Blues",cluster_y=T)
+```
+```{r}
+cluster_ident <- as.data.frame.matrix(table(tumor[[c("Condition","seurat_clusters")]]))
+cluster_ident <- cluster_ident/rowSums(cluster_ident)
+cluster_ident <- round(cluster_ident,digits=3)
+```
+```{r}
+# Name tumor clusters
+new.cluster.ids <- c("Epi Cancer 1","Mes EMT","Mes Cancer","Cycling Mes","Cycling Epi","Epi pEMT","Epi Cancer 2","Mes Cancer 2","EMT")
+names(new.cluster.ids) <- levels(tumor)
+tumor <- RenameIdents(tumor, new.cluster.ids)
+DimPlot(tumor, reduction = "umap", label = TRUE,label.size=4,repel=T) + NoLegend()
+tumor$celltype <- Idents(tumor)
+tumor$Group <- paste(tumor$celltype,tumor$Condition)
+saveRDS(tumor, file.path(dir,"Analysis/tumor.whole.rds"))
+tumor <- readRDS(file.path(dir,"Analysis/tumor.whole.rds"))
+```
+```{r}
+# Mes vs. Epi
+Idents(tumor) <- "Group"
+emt.markers <- FindMarkers(tumor, ident.1="Mes Cancer 1 Ctrl",ident.2="Epi Cancer 1 Ctrl",min.pct=0.25,logfc.threshold = 0.25)
+emt.markers <- emt.markers[order(emt.markers$avg_log2FC),]
+write.table(emt.markers,file.path(dir,"Analysis/Mes 1 Ctrl vs. Epi 1 Ctrl Markers.txt"),sep="\t")
+```
+
+```{r}
+# Look at tumor TNFa pathway signature
+mouse_gene_sets = msigdbr(species = "Mus musculus")
+mouse_hallmark = mouse_gene_sets %>% dplyr::filter(gs_cat == "H")
+tnfa = mouse_hallmark %>% dplyr::filter(gs_name == "HALLMARK_TNFA_SIGNALING_VIA_NFKB")
+tumor <- AddModuleScore(tumor,features=list(tnfa$gene_symbol),name="TNFa_pathway")
+#FeaturePlot(tumor, features="TNFa_pathway1",reduction="umap_harmony")
+ifng = mouse_hallmark %>% dplyr::filter(gs_name == "HALLMARK_INTERFERON_GAMMA_RESPONSE")
+tumor <- AddModuleScore(tumor,features=list(ifng$gene_symbol),name="IFNg_pathway")
+tgfb = mouse_hallmark %>% dplyr::filter(gs_name == "HALLMARK_TGF_BETA_SIGNALING")
+tumor <- AddModuleScore(tumor,features=list(tgfb$gene_symbol),name="TGFb_pathway")
+
+# T cell recruitment L-R interactions
+bubbleplot(tumor,features_plot = c("IFNg_pathway1","TNFa_pathway1","TGFb_pathway1","Cxcl9","Cxcl10","Cxcl11","Cxcl16","Ccl3","Ccl4","Ccl5"),colors_use = "Blues")
+bubbleplot(tumor,features_plot = c("TGFb_pathway1","Il33","Atg9b","Anxa1"),colors_use = "Blues",cluster_y=T)
+bubbleplot(tumor,features_plot=c("Itgav","Itgb1","Itgb3","Itgb5","Itgb6","Itgb8"),colors_use = "Blues",cluster_y=T)
+bubbleplot(tumor,features_plot=c("Fra1","Fosb","Junb","Jun","Atf3","Cebpd"),colors_use = "Blues",cluster_y=T)
+bubbleplot(tumor,features_plot = c("Csf1","Il34","Cxcl16","Ccl5"),colors_use = "Blues",cluster_y=T)
+```
+```{r}
+# Do Cycling Mes Cancer cell TNFa signaling correlate with higher T cell infiltration?
+tumor.meta <- tumor@meta.data
+tumor.meta <- tumor.meta[c("orig.ident","Condition","celltype","subcluster","Tnfa_pathway1")] # 4569 Cycling Mes cancer cells
+# Calculate correlation, vs. randomly selected tumor cells 
+colnames(immune_ident) <- gsub(" ","_",colnames(immune_ident))
+metat <- merge(tumor.meta,immune_ident, by.x="orig.ident",by.y=0)
+cycling.meta <- metat[metat$celltype=="Cycling Mes Cancer",]
+# Pseudo-bulk of Cycling Cancer values
+cycling.summary <- cycling.meta %>% group_by(c(orig.ident)) %>% summarize(Tnfa=mean(Tnfa_pathway1))
+cycling.summary <- merge(cycling.summary,immune_ident,by.x="c(orig.ident)",by.y=0)
+cycling.summary$PD1 <- factor(c(replicate(8,0),replicate(8,1)))
+res <- lm(formula = (T_Cells ~ Tnfa),data=cycling.summary)
+print(summary(res))
+p_value = summary(res)$coef[2,4]
+ggplot(cycling.summary,aes(Tnfa, T_Cells))+geom_point(aes(color=PD1)) +
+   geom_smooth(method='lm',formula = y ~ x)+labs(x="Cycling Mes Cancer TNFa score",y="T Cells/Immune cells",title=paste("T cell ~ Cycling Mes TNFa p-value =",round(p_value,3),"R^2=",round(summary(res)$r.squared,3)))+theme(plot.title=element_text(hjust=0.5))
+```
+
+
+7. Tumor trajectory analysis using Monocole 3
+```{r}
+mes[["umap"]] <- mes[["umap_harmony"]]
+cds <- as.cell_data_set(mes)
+cds <- cluster_cells(cds, resolution=1e-4)
+
+p1 <- plot_cells(cds, color_cells_by = "cluster", show_trajectory_graph = FALSE,group_label_size=5)
+p2 <- plot_cells(cds, color_cells_by = "partition", show_trajectory_graph = FALSE,group_label_size=4)
+wrap_plots(p1, p2)
+```
+```{r}
+# Trajectory analysis on Epi cells
+mes <- subset(as.Seurat(cds, assay = NULL), monocle3_partitions == 2)
+cds <- as.cell_data_set(mes)
+cds <- cluster_cells(cds)
+cds <- learn_graph(cds, use_partition = TRUE, verbose = FALSE)
+plot_cells(cds,
+           color_cells_by = "cluster",
+           label_groups_by_cluster=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE)
+```
+```{r}
+cds <- learn_graph(cds, use_partition = TRUE, verbose = FALSE)
+cds <- order_cells(cds, root_cells = colnames(cds[,clusters(cds) == 3]))
+plot_cells(cds,
+           color_cells_by = "pseudotime",
+           group_cells_by = "cluster",
+           label_cell_groups = FALSE,
+           label_groups_by_cluster=FALSE,
+           group_label_size=5,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           label_roots = FALSE,
+           trajectory_graph_color = "grey60")
+
+```
+
+```{r}
+# Find Markers within each cluster of tumor cells, between Ctrl and aPD1 groups
+Idents(bppnm.whole) <- bppnm.whole$Group
+df <- data.frame(matrix(ncol = 7, nrow = 0))
+plist <- list()
+for (i in 1:5){
+  cluster = cancer_clusters[i]
+  markers = FindMarkers(bppnm.whole,ident.1=paste(cluster,"PD1"),ident.2=paste(cluster,"Ctrl"),logfc.threshold = 0.25, min.pct = 0.25)
+  markers$Cluster = cluster
+  markers$gene = rownames(markers)
+  top20 <- markers %>% dplyr::filter(avg_log2FC > 1 | avg_log2FC < -1) %>%
+    slice_head(n = 20)
+  #plist[[i]] <- DoHeatmap(subset(tumor,idents=c(paste(cluster,"Ctrl"),paste(cluster,"PD1"))), features=rownames(top20),size=4)
+  markers = markers[order(markers$avg_log2FC),]
+  markers = markers[markers$p_val_adj < 0.05,]
+  df = rbind(df,markers)
+}
+write.table(df,file=file.path(dir,"Analysis/tumor_treatment_markers.txt"),sep="\t",row.names=F)
+
+# Plot H2-K1 and Pdl1 expression
+VlnPlot(tumor, features=c("H2-K1","Cd274"))+NoLegend()
+emt.markers <- FindMarkers(tumor, ident.1=c("Epi Cancer 1","Cycling Epi Cancer","Epi Cancer 2"),ident.2=c("Mes Cancer 1","Cycling Mes Cancer"),logfc.threshold=0.01,min.pct=0.0)
+emt.markers$gene = rownames(emt.markers)
+sub.markers = emt.markers[emt.markers$gene %in% c("H2-K1","Cd274"),]
+```
+
+8. Stromal and Immune signatures of PD1 treatment
+```{r}
+tcells <- subset(bppnm.whole,idents="T Cells") # 2887 cells
+tcells <- FindNeighbors(tcells,reduction="harmony",dim=1:30)
+tcells <- FindClusters(tcells, reduction="harmony",resolution=0.2) #5 clusters
+tcells <- RunUMAP(tcells,reduction="harmony",dim=1:30,reduction.name="umap_harmony")
+p1 <- DimPlot(tcells, reduction="umap_harmony",label=T,label.size=5)+NoLegend()
+p2 <- DimPlot(tcells, reduction="umap_harmony",shuffle=T,group.by="orig.ident")
+p3 <- DimPlot(tcells, reduction="umap_harmony",shuffle=T,group.by="Condition")
+p1+p2+p3
+
+t.markers <- FindAllMarkers(tcells,min.pct=0.25, logfc.threshold = 0.25,only.pos = T)
+topt.markers <- t.markers %>% group_by(cluster) %>%
+  slice_head(n=10) %>% ungroup()
+DoHeatmap(tcells, features=topt.markers$gene,size=4)
+write.table(topt.markers,file.path(dir,"Analysis/top10.t.markers.txt"),sep="\t")
+```
+```{r}
+tcells.1 <- subset(tcells, idents="1") # 1181 samples
+tcells.1 <- FindClusters(tcells.1,resolution=0.3) #5 clusters
+DimPlot(tcells.1, reduction="umap_harmony",label=T,label.size=5)+NoLegend()
+t1.markers <- FindAllMarkers(tcells.1,min.pct=0.25, logfc.threshold = 0.25,only.pos = T)
+t1.top10 <- t1.markers %>% group_by(cluster) %>% slice_head(n=10) %>% ungroup()
+DoHeatmap(tcells.1, features=t1.top10$gene, size=4)
+bubbleplot(tcells,features_plot = c("Cd3e","Cd8a","Cd4","Foxp3","Mki67","Cd38","H2-Ab1","Gzmb","Irf7",
+                                    "Gzmk","Stat1","Pdcd1","Nkg7"),colos_use="Blues")
+```
+```{r}
+new.cluster.ids <- c("Cytotoxic T","T cells","Cycling T","Activated T","IFN-signature T")
+names(new.cluster.ids) <- levels(tcells)
+tcells <- RenameIdents(tcells, new.cluster.ids)
+DimPlot(tcells, reduction = "umap_harmony",label=T,label.size=4)+NoLegend()
+tcells$cluster <- Idents(tcells)
+saveRDS(tcells, file.path(dir,"Analysis/tcells.rds"))
+```
+
+```{r}
+Idents(bppnm) <- bppnm$Group
+t.markers <- FindMarkers(bppnm,ident.1="T Cells PD1",ident.2="T Cells Ctrl",min.pct=0.25,logfc.threshold=0.25)
+t.markers <- t.markers[t.markers$p_val_adj < 0.05,]
+t.markers <- t.markers[order(t.markers$avg_log2FC),]
+write.table(t.markers,file.path(dir,"Analysis/t_PD1_vs_Ctrl.txt"),sep="\t")
+DoHeatmap(subset(bppnm,idents=c("T Cells Ctrl","T Cells PD1")),features=rownames(t.markers),size=4)
+```
+```{r}
+# T cell subset correlation with EMT (caution small number of T cells per subset)
+t_subset <- as.data.frame.matrix(table(tcells[[c("orig.ident","cluster")]]))
+immune_sub <- cbind(t_subset,cluster_ident[c("Myeloid 1","Neutrophils","Cycling Myeloid","B cells")])
+immune_sub <- immune_sub/rowSums(immune_sub)
+cancer_immune <- cbind(cancer_ident,immune_sub)
+colnames(cancer_immune) <- gsub(" ","_",colnames(cancer_immune))
+cancer_immune$PD1 <- factor(c(replicate(8,0),replicate(8,1)))
+# Run correlation analysis
+res <- lm(formula = (T_Cells ~ pEMT_Cancer_2),data=merge_ident)
+print(summary(res))
+p_value = summary(res)$coef[2,4]
+ggplot(merge_ident,aes(pEMT_Cancer_2, T_Cells))+geom_point(aes(color=PD1)) +
+   geom_smooth(method='lm',formula = y ~ x)+labs(x="pEMT_Cancer_2/Cancer cells",y="T Cells/Immune cells",title=paste("Correlation p-value =",round(p_value,3),"R^2=",round(summary(res)$r.squared,3)))+theme(plot.title=element_text(hjust=0.5))
+```
+
+```{r}
+caf.markers <- FindMarkers(bppnm,ident.1="CAFs PD1",ident.2="CAFs Ctrl", min.pct=0.25, logfc.threshold=0.25)
+caf.markers <- caf.markers[caf.markers$p_val_adj<0.05,]
+caf.markers <- caf.markers[order(caf.markers$avg_log2FC),]
+write.table(caf.markers, file.path(dir,"Analysis/CAF_PD1_vs_Ctrl.txt"),sep="\t")
+top.cafmarkers <- caf.markers %>% slice_head(n=10)
+bottom.cafmarkers <- caf.markers %>% slice_tail(n=10)
+DoHeatmap(subset(bppnm, idents=c("CAFs PD1","CAFs Ctrl")), features=c(rownames(top.cafmarkers), rownames(bottom.cafmarkers)),size=4)
+```
+```{r}
+cafs <- subset(bppnm, idents=c("CAFs PD1","CAFs Ctrl"))
+DimPlot(cafs,reduction="umap",shuffle=T)
+FeaturePlot(cafs, features=c("Pdpn","Thy1","S100a4","Pdgfra","Pdgfrb","Fap","Acta2","Ccl2","Cd74"))
+```
+
+6. Tumor cell ICR (immunotherapy resistance) signatures
+```{r}
+# Convert human symbols to list of mouse symbols
+matchMMUsymbol<-function(human_symbol){
+  dir = "~/Dropbox (Partners HealthCare)/Documents/Code"
+	map=read.table(file.path(dir,'codes_Davis/src/Mouse_Human_GeneIDs_sub.txt'),sep=' ',header=T)
+	map_sor<-map[match(human_symbol,map$hsa_symbol),]
+	mouse<-map_sor$mmu_symbol
+	return(mouse)
+}
+```
+```{r}
+# Calculate and plot Immunotherapy-resistance and Axl signatures
+table <- read_excel(file.path("~/Dropbox (Partners HealthCare)/Documents/Papers/Wang 2023 Sup Table 6.xlsx"),sheet="Table 6",skip=2)
+icr.genes <- matchMMUsymbol(table$`Immune resistance (up)`)
+icr.genes <- intersect(rownames(tumor),icr.genes)
+axl.genes <- intersect(rownames(tumor),matchMMUsymbol(table$`AXL signature`)[1:100])
+# Add mean scores
+tumor <- AddModuleScore(tumor, features = list(icr.genes),name="icr_signature",ctrl=100, seed=10)
+tumor <- AddModuleScore(tumor,features=list(axl.genes), name="axl_signature",ctrl=100, seed=10)
+FeaturePlot(tumor,features=c("icr_signature1","axl_signature1"))+scale_color_gradientn(colors = c("darkblue","white","red"))
+```
+
+7. Myeloid subclustering and analysis
+```{r}
+Idents(bppnm.whole) <- bppnm.whole$celltype
+myeloid <- subset(bppnm.whole, idents=c("Myeloid 1","Cycling Myeloid","Neutrophils")) # 14020 cells
+myeloid <- FindNeighbors(myeloid, reduction="harmony", dims=1:30)
+myeloid <- FindClusters(myeloid, reduction="harmony",resolution=0.3) # 7 clusters
+myeloid <- RunUMAP(myeloid, dims=1:30, reduction="harmony",reduction.name="umap_harmony")
+p1 <- DimPlot(myeloid, reduction="umap_harmony",label=T,label.size=5)+NoLegend()
+p2 <- DimPlot(myeloid, reduction="umap_harmony",shuffle=T,group.by="orig.ident")
+p3 <- DimPlot(myeloid, reduction="umap_harmony",shuffle=T,group.by="Condition")
+p1+p2+p3
+```
+```{r}
+# Identify myeloid clusters
+myeloid.markers <- FindAllMarkers(myeloid, min.pct=0.25,logfc.threshold = 0.25,only.pos=T)
+myeloid.markers <- myeloid.markers[myeloid.markers$p_val_adj<0.05,]
+top10.myeloid <- myeloid.markers %>% group_by(cluster) %>%
+  slice_head(n=10) %>% ungroup()
+DoHeatmap(myeloid, features=top10.myeloid$gene,size=4)
+write.table(top10.myeloid,file.path(dir,"Analysis/top10.myeloid.whole.txt"),sep="\t")
+top10.myeloid <- read.table(file.path(dir,"Analysis/top10.myeloid.whole.txt"),sep="\t")
+```
+```{r}
+VlnPlot(myeloid, features=c("Itgax","Xcr1","H2-Ab1","Cd68","Csf3r","S100a9","Mki67","Mrc1", "Cd274","Cd80","CD86"))
+bubbleplot(myeloid,features_plot = c("Itgax","Xcr1","H2-Ab1","Arg1","Cd163","Cd68","S100a9","Mki67","Mrc1","Cd274","Cd80","Cd86","Stat1","Cxcl10","Selenop","C1qc","Csf3r","Fcgr1","Apoe","Spp1"),colors_use="Blues",cluster_y = T)
+```
+
+8. Evaluate myeloid representation across and within 
+```{r}
+new.cluster.ids <- c("Tissue_resident Macrophages","M2 Macrophages","TAMs","Neutrophils","Cycling Macrophages","Activated Macrophages")
+names(new.cluster.ids) <- levels(myeloid)
+myeloid <- RenameIdents(myeloid, new.cluster.ids)
+DimPlot(myeloid, reduction="umap_harmony",label=T,repel=T,label.size=5)+NoLegend()
+myeloid$cluster <- Idents(myeloid)
+saveRDS(myeloid,file.path(dir,"Analysis/myeloid.whole.rds"))
+saveRDS(tumor, file.path(dir,"Analysis/tumor.whole.rds"))
+myeloid <- readRDS(file.path(dir,"Analysis/myeloid.whole.rds"))
+myeloid$subgroup <- paste(myeloid$cluster,myeloid$Condition)
+```
+
+```{r}
+# Contribution
+#myeloid.clusters <- table(myeloid$cluster,myeloid$orig.ident)
+myeloid.clusters <- as.data.frame(table(myeloid[[c("Condition","cluster")]]))
+ggplot(myeloid.clusters, aes(fill=cluster, y=Freq, x=Condition))+
+  geom_bar(stat="identity")+labs(x="Treatment",y="Myeloid Count")
+# Calculate representation
+myeloid.clusters <- as.data.frame.matrix(table(myeloid[[c("Condition","cluster")]]))
+rsums <- rowSums(myeloid.clusters)
+p_vals <- c()
+for (i in 1:length(myeloid.clusters)){
+  res <- prop.test(x=c(myeloid.clusters[1,i],myeloid.clusters[2,i]), n=rsums)
+  p_vals <- c(p_vals, res$p.value)
+}
+mclusters <- as.data.frame(t(myeloid.clusters))
+mclusters <- mclusters/colSums(mclusters)
+mclusters$p_vals <- p_vals
+mclusters$Signif <- (p_vals < 0.05)
+```
+```{r}
+# Tumor cluster representation vs. immune infiltration
+# Correlation between % in tumor cells and % in non-tumor cells across samples
+cluster_ident <- as.data.frame.matrix(table(bppnm.whole[[c("orig.ident","celltype")]]))
+cancer_clusters <- c("Mes Cancer 1","Cycling Mes Cancer","Epi Cancer 1","Epi Cancer 2","Cycling Epi Cancer")
+cancer_ident <- cluster_ident[colnames(cluster_ident) %in% cancer_clusters]
+cancer_ident <- cancer_ident/rowSums(cancer_ident)
+
+non_cancer_ident <- cluster_ident[setdiff(colnames(cluster_ident),cancer_clusters)]
+non_cancer_ident <- non_cancer_ident/rowSums(non_cancer_ident)
+
+myeloid_ident <- as.data.frame.matrix(table(myeloid[[c("orig.ident","cluster")]]))
+```
+```{r}
+cancersub_ident <- as.data.frame.matrix(table(tumor[[c("orig.ident","subcluster")]]))
+cancersub_ident <- cancersub_ident/rowSums(cancersub_ident) # 11 Clusters
+colnames(cancersub_ident) <- gsub(" ","_",colnames(cancersub_ident))
+```
+```{r}
+immune_clusters <- c("Myeloid 1","T Cells","Neutrophils","Cycling Myeloid","B cells")
+immune_ident <- cluster_ident[immune_clusters]
+immune_ident <- immune_ident/rowSums(immune_ident)
+cancer_ident <- cluster_ident[cancer_clusters]
+cancer_ident <- cancer_ident/rowSums(cancer_ident)
+colnames(cancer_ident) <- gsub(" ","_",colnames(cancer_ident))
+merge_ident <- cbind(immune_ident,cancersub_ident)
+colnames(merge_ident) <- gsub(" ","_",colnames(merge_ident))
+merge_ident$PD1 <- c(replicate(8,0),replicate(8,1))
+merge_ident$PD1 <- factor(merge_ident$PD1)
+# Make norm_ident, normalized representation across all samples per sample
+norm_ident <- cluster_ident/rowSums(cluster_ident)
+colnames(norm_ident) <- gsub(" ","_",colnames(norm_ident))
+norm_ident$PD1 <- c(replicate(8,0),replicate(8,1))
+norm_ident$PD1 <- factor(norm_ident$PD1)
+sub_ident <- norm_ident[setdiff(colnames(norm_ident),cancer_clusters)]
+cancer_norm_ident <- cbind(cancer_ident,sub_ident)
+
+plot_regress <- function(df,cell1, cell2){
+res <- lm(formula = (T_Cells ~ pEMT_Cancer_2),data=merge_ident)
+print(summary(res))
+p_value = summary(res)$coef[2,4]
+ggplot(merge_ident,aes(pEMT_Cancer_2, T_Cells))+geom_point(aes(color=PD1)) +
+   geom_smooth(method='lm',formula = y ~ x)+labs(x="pEMT_Cancer_2/Cancer cells",y="T Cells/Immune cells",title=paste("Correlation p-value =",round(p_value,3),"R^2=",round(summary(res)$r.squared,3)))+theme(plot.title=element_text(hjust=0.5))
+}
+plot_regress(merge_ident,Cycling_Myeloid,T_Cells)
+```
+
+```{r}
+non_cancer_cluster <- setdiff(gsub(" ","_",colnames(cluster_ident)),cancer_clusters)
+colnames(cluster_ident) <- gsub(" ","_",colnames(cluster_ident))
+cluster_ident$PD1 <- c(replicate(8,0),replicate(8,1))
+myeloid_ident <- as.data.frame.matrix(table(myeloid[[c("orig.ident","cluster")]]))
+myeloid_ident <- myeloid_ident/rowSums(myeloid_ident)
+cell_table <- cbind(cancer_ident,myeloid_ident)
+colnames(cell_table) <- gsub(" ","_",colnames(cell_table))
+cancer_clusters <- gsub(" ","_",colnames(cancer_ident))
+immune_clusters <- gsub(" ","_",unique(myeloid$cluster))
+non_cancer_clusters <- gsub(" ","_", colnames(non_cancer_ident))
+# Cell type representation
+n_noncancer = length(non_cancer_cluster)
+ncancer = length(cancer_ident)
+#out <- array('list', dim=c(n_noncancer,ncancer),dimnames =list(non_cancer_cluster,cancer_clusters))
+coef <- array(dim=c(n_noncancer,ncancer),
+             dimnames =list(non_cancer_cluster,cancer_clusters))
+p_value <- array(dim=c(n_noncancer,ncancer),
+                 dimnames =list(non_cancer_cluster,cancer_clusters))
+r_squared <- array(dim=c(n_noncancer,ncancer),
+                   dimnames =list(non_cancer_cluster,cancer_clusters))
+r <- array(dim=c(n_noncancer,ncancer),
+                   dimnames =list(non_cancer_cluster,cancer_clusters))
+#coef_pd1 <- array(dim=c(n_noncancer,ncancer),
+#             dimnames =list(non_cancer_clusters,cancer_clusters))
+#p_pd1 <- array(dim=c(n_noncancer,ncancer),
+#             dimnames =list(non_cancer_clusters,cancer_clusters))
+cell_table$PD1 <- c(replicate(8,0),replicate(8,1))
+label <- c()
+
+for (i in 1:n_noncancer){
+  for (j in 1:ncancer){
+    cluster = non_cancer_cluster[i]
+    cancer = cancer_clusters[j]
+    out <- lm(formula=paste(cluster, '~', cancer,"+PD1"),data=cluster_ident)
+    print(summary(out))
+    coef[i,j] <- summary(out)$coef[2,1]
+    p_value[i,j] <- summary(out)$coef[2,4]
+    #coef_pd1[i,j] <- summary(out)$coef[3,1]
+    #p_pd1[i,j] <- summary(out)$coef[3,4]
+    r_squared[i,j] <- summary(out)$adj.r.squared
+    if(r_squared[i,j]<0){
+      r[i,j]=0
+    } else if(coef[i,j]>0){
+      r[i,j] <- sqrt(r_squared[i,j])
+    } else{
+      r[i,j] <- (-sqrt(r_squared[i,j]))
+    }
+  }
+}
+
+heatmap1 <- pheatmap(r,color = colorRampPalette(c("navy", "white", "red"))(50),breaks=seq(-1,1,length.out=50))
+ro_1 <- heatmap1$tree_row$order
+col_1 <- heatmap1$tree_col$order
+heatmap2 <- pheatmap(coef[ro_1,col_1], color=colorRampPalette(c("navy", "white", "red"))(50),cluster_cols = F,cluster_rows=F,breaks=seq(-0.5,0.5,length.out=50))
+```
+```{r}
+lm_df <- data.frame(as.vector(t(coef)), as.vector(t(p_value)),as.vector(t(r_squared)), label)
+colnames(lm_df) <- c("Coef","p_value","r_squared","Labels")
+p1 <- ggplot(lm_df, aes(x=Coef, y=r_squared, label=Labels))+
+  geom_point()+geom_text_repel(max.overlaps=20)+
+  #geom_hline(yintercept=-log10(0.05),linetype=2,color="blue")+
+  geom_vline(xintercept=0)+ geom_hline(yintercept=0)+
+  ylim(c(NA,1))+
+  labs(x="Coefficient",y="R^2",title="Myeloid Cluster ~ Tumor Cluster")+
+  theme(plot.title=element_text(hjust=0.5,size=15))
+print(p1)
+```
+
+9. CellChat cell-cell interaction analysis
+```{r}
+ptm = Sys.time()
+data.dir <- file.path(dir, "CellChat")
+setwd(data.dir)
+```
+```{r}
+# Prepare datasets (Split into Ctrl, PD1). Exclude Mes Cancer 2 because it's unique to 1 sample
+bppnm.ctrl <- subset(bppnm.whole,subset= (Condition=="Ctrl") & (celltype != "Mes Cancer 2"))
+bppnm.pd1 <- subset(bppnm.whole,subset= (Condition=="PD1") & (celltype != "Mes Cancer 2"))
+# Function to make cellchat object
+make_cellchat <- function(sobject){
+  data.input = sobject@assays$RNA$data
+labels <- Idents(sobject)
+meta = data.frame(labels=labels, samples=as.factor(sobject$orig.ident),row.names=names(labels))
+cellchat <- createCellChat(object = data.input, meta = meta, group.by = "labels")
+return(cellchat)
+}
+
+```
+```{r}
+cellchat.ctrl <- make_cellchat(bppnm.ctrl)
+cellchat.pd1 <- make_cellchat(bppnm.pd1)
+```
+```{r}
+# Set ligand-receptor interaction database
+CellChatDB <- CellChatDB.mouse
+showDatabaseCategory(CellChatDB)
+CellChatDB.use <- subsetDB(CellChatDB)
+cellchat.ctrl@DB <- CellChatDB.use
+cellchat.pd1@DB <- CellChatDB.use
+```
+```{r}
+# Preprocessing expression data
+cellchat.ctrl <- subsetData(cellchat.ctrl)
+future::plan("multisession", workers = 4) # do parallel
+cellchat.ctrl <- identifyOverExpressedGenes(cellchat.ctrl)
+cellchat.ctrl <- identifyOverExpressedInteractions(cellchat.ctrl) #2142 signaling pairs
+execution.time = Sys.time() - ptm
+print(as.numeric(execution.time, units = "secs"))
+```
+```{r}
+cellchat.pd1 <- subsetData(cellchat.pd1)
+future::plan("multisession", workers = 4) # do parallel
+cellchat.pd1 <- identifyOverExpressedGenes(cellchat.pd1)
+cellchat.pd1 <- identifyOverExpressedInteractions(cellchat.pd1) # 2186 Signaling pairs 
+execution.time = Sys.time() - ptm
+print(as.numeric(execution.time, units = "secs"))
+```
+```{r}
+cellchat <- list(cellchat.ctrl, cellchat.pd1)
+for (i in 1:2){
+  cellchat[[i]] <- computeCommunProb(cellchat[[i]], type = "triMean")
+  cellchat[[i]] <- filterCommunication(cellchat[[i]], min.cells = 10)
+  cellchat[[i]] <- computeCommunProbPathway(cellchat[[i]])
+  cellchat[[i]] <- aggregateNet(cellchat[[i]])
+  execution.time = Sys.time() - ptm
+  print(as.numeric(execution.time, units = "secs"))
+}
+```
+```{r}
+cellchat.ctrl <- cellchat[[1]]
+groupSize <- as.numeric(table(cellchat.ctrl@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat.ctrl@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat.ctrl@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+```
+```{r}
+#cellchat.ctrl <- cellchat[[1]]
+cellchat.pd1 <- cellchat[[2]]
+groupSize <- as.numeric(table(cellchat.pd1@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat.pd1@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat.pd1@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+```
+```{r}
+mat <- cellchat.ctrl@net$weight
+par(mfrow = c(3,5), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat), title.name = rownames(mat)[i])
+}
+```
+```{r}
+# Compute the network centrality scores
+cellchat.ctrl <- netAnalysis_computeCentrality(cellchat.ctrl, slot.name = "netP")
+cellchat.pd1 <- netAnalysis_computeCentrality(cellchat.pd1, slot.name = "netP")
+```
+
+```{r}
+saveRDS(cellchat.ctrl, file=file.path(data.dir,"cellchat_ctrl_whole.rds"))
+saveRDS(cellchat.pd1,file=file.path(data.dir,"cellchat_pd1_whole.rds"))
+cellchat.ctrl <- readRDS(file=file.path(data.dir,"cellchat_ctrl_whole.rds"))
+cellchat.pd1 <- readRDS(file=file.path(data.dir,"cellchat_pd1_whole.rds"))
+```
+9b. Examine ligand-receptor interactions between Cycling_Mes_Cancer, T cells, and Myeloid cells
+```{r}
+# Access all the signaling pathways showing significant communications
+pathways.show.all <- cellchat.pd1@netP$pathways
+# check the order of cell identity to set suitable vertex.receiver
+levels(cellchat.pd1@idents)
+vertex.receiver = seq(1,4)
+for (i in 1:length(pathways.show.all)) {
+  # Visualize communication network associated with both signaling pathway and individual L-R pairs
+  gg <- netVisual(cellchat.pd1, signaling = pathways.show.all[i], vertex.receiver = vertex.receiver, layout = "hierarchy")
+  # Compute and visualize the contribution of each ligand-receptor pair to the overall signaling pathway
+  gg <- netAnalysis_contribution(cellchat.pd1, signaling = pathways.show.all[i])
+  print(gg)
+  #ggsave(filename=paste0(pathways.show.all[i], "_L-R_contribution.pdf"), plot=gg, width = 3, height = 2, units = 'in', dpi = 300)
+}
+```
+```{r}
+# Use Bubble plot to show all significant interactions from Cancer cells to T cells
+# (1) show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(cellchat.pd1, sources.use = c(2,11), targets.use = c(1,3,5,6,7),signaling=c("CCL","CXCL","CSF"),remove.isolate = FALSE) # T cell to Tumor
+netVisual_bubble(cellchat.pd1, sources.use = c(1,3,5,6,7), targets.use = c(2,11), signaling=c("CCL","CXCL","CSF"),remove.isolate = FALSE) # Tumor to T cells
+netVisual_bubble(cellchat.pd1, sources.use = 8, targets.use = c(2,11), remove.isolate = FALSE) # T cell to myeloid
+netVisual_bubble(cellchat.pd1, sources.use = c(2,11), targets.use = c(1,3,5,6,7),signaling=c("FGF","PDGF","EGF","TGFb","TNF"),remove.isolate = FALSE) # Myeloid to Tumor
+```
+```{r}
+# Tumor and myeloid interactions
+netVisual_bubble(cellchat.ctrl, sources.use = c(2,11), targets.use = c(1,3,5,6,7),signaling=c("FGF","PDGF","EGF","TGFb","TNF"),remove.isolate = FALSE) 
+netVisual_bubble(cellchat.ctrl, sources.use = c(1,3,5,6,7), targets.use = c(2,11), signaling=c("CCL","CXCL","CSF"),remove.isolate = FALSE)
+# Tumor and T cell
+netVisual_bubble(cellchat.ctrl, sources.use = c(1,3,5,6,7), targets.use = 8,signaling=c("CCL","CXCL","CSF"),remove.isolate = FALSE)
+# T and Myeloid
+netVisual_bubble(cellchat.ctrl, sources.use = c(2,11), targets.use = 8,signaling=c("CCL","CXCL","CSF"),remove.isolate = FALSE)
+netVisual_bubble(cellchat.ctrl, sources.use = 8, targets.use = c(2,11),signaling=c("FGF","PDGF","EGF","TGFb","TNF"),remove.isolate = FALSE)
+```
+
+10. CellChat comparsion between Ctrl vs. PD1
+```{r}
+object.list <- list(Ctrl = cellchat.ctrl, Pd1 = cellchat.pd1)
+cellchat <- mergeCellChat(object.list, add.names=names(object.list))
+cellchat
+save(object.list,file=file.path(data.dir,"cellchat_BPPNM_objects.RData"))
+save(cellchat,file=file.path(data.dir,"cellchat_merged_BPPNM.RData"))
+```
+```{r}
+gg1 <- compareInteractions(cellchat, show.legend = F, group = c(1,2))
+gg2 <- compareInteractions(cellchat, show.legend = F, group = c(1,2), measure = "weight")
+gg1 + gg2
+```
+```{r}
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_diffInteraction(cellchat, weight.scale = T)
+netVisual_diffInteraction(cellchat, weight.scale = T, measure = "weight")
+```
+```{r}
+gg1 <- netVisual_heatmap(cellchat)
+#> Do heatmap based on a merged object
+gg2 <- netVisual_heatmap(cellchat, measure = "weight")
+#> Do heatmap based on a merged object
+gg1 + gg2
+```
+```{r}
+weight.max <- getMaxWeight(object.list, attribute = c("idents","count"))
+par(mfrow = c(1,2), xpd=TRUE)
+for (i in 1:length(object.list)) {
+  netVisual_circle(object.list[[i]]@net$count, weight.scale = T, label.edge= F, edge.weight.max = weight.max[2], edge.width.max = 12, title.name = paste0("Number of interactions - ", names(object.list)[i]))
+}
+```
+
+```{r}
+num.link <- sapply(object.list, function(x) {rowSums(x@net$count) + colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(num.link), max(num.link)) # control the dot size in the different datasets
+gg <- list()
+for (i in 1:length(object.list)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(object.list[[i]], title = names(object.list)[i], weight.MinMax = weight.MinMax)
+}
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+patchwork::wrap_plots(plots = gg)
+```
+```{r}
+gg1 <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Epi Cancer 1")
+gg2 <- netAnalysis_signalingChanges_scatter(cellchat,idents.use="Cycling Epi Cancer")
+patchwork::wrap_plots(plots=list(gg1,gg2))
+```
+
+```{r}
+# Identify siganling groups based on functional similarities
+ptm = Sys.time()
+
+cellchat <- computeNetSimilarityPairwise(cellchat, type = "functional")
+#> Compute signaling network similarity for datasets 1 2
+cellchat <- netEmbedding(cellchat, type = "functional")
+#> Manifold learning of the signaling networks for datasets 1 2
+cellchat <- netClustering(cellchat, type = "functional")
+#> Classification learning of the signaling networks for datasets 1 2
+# Visualization in 2D-space
+netVisual_embeddingPairwise(cellchat, type = "functional", label.size = 3.5)
+#> 2D visualization of signaling networks from datasets 1 2
+```
+```{r}
+pathways.show <- c("EGF") 
+# Hierarchy plot
+# Here we define `vertex.receive` so that the left portion of the hierarchy plot shows signaling to fibroblast and the right portion shows signaling to immune cells 
+vertex.receiver = seq(1,4) # a numeric vector. 
+netVisual_aggregate(cellchat.pd1, signaling = pathways.show,  vertex.receiver = vertex.receiver)
+# Circle plot
+par(mfrow=c(1,1))
+netVisual_aggregate(cellchat.pd1, signaling = pathways.show, layout = "circle")
+```
+11. Partial-correlation analysis
+```{r}
+# Normalize immune clusters/All cells, tumor clusters/Tumor cells
+cluster_ident <- as.data.frame.matrix(table(bppnm.whole[[c("orig.ident","celltype")]]))
+cancer_ident <- cluster_ident[cancer_clusters]
+nb <- rowSums(cluster_ident) #min(nb)
+cluster_ident <- cluster_ident/nb
+cancer_ident <- cancer_ident/rowSums(cancer_ident)
+merge_table <- cbind(cluster_ident[c("T Cells","Myeloid 1","Cycling Myeloid")],cancer_ident)
+# Change column names
+colnames(merge_table) <- gsub(" ","_",colnames(merge_table))
+```
+```{r}
+# Calculate tumor cell ~ T_Cells correlation conditioned on Myeloid_1, Cycling_Myeloid. Myeloid_1, Cycling_Myeloid conditioned on T_Cells
+subset <- merge_table[c("Mes_Cancer_1","T_Cells","Myeloid_1")]
+pcor(subset)
+pcor(merge_table[c("Cycling_Mes_Cancer","Cycling_Myeloid","Myeloid_1")])
+```
+
+10. Plot expression of Top Mes TFs predicted by LISA
+```{r}
+dir <- "/Users/ningguan/Partners Healthcare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_aPD1_Flex"
+tumor <- readRDS(file.path(dir,"Analysis/tumor.whole.rds"))
+saveRDS(tumor,file.path(dir,"Analysis/tumor.whole.rds"))
+# Plot average expression
+avg.tumor <- AggregateExpression(tumor,return.seurat = T)
+tf.lisa <- c("Cebpb","Neurod2","Yap1","Runx2","Myod1","Kmt2b","Fosl2","Nr6a1","Junb","Med1","Fosl1")
+tumor.matrix <- as.data.frame(t(FetchData(avg.tumor, vars=tf.lisa, layer="scale.data")))
+heatmap1 <- pheatmap(tumor.matrix,
+         color = colorRampPalette(c("navy", "white", "red"))(50),
+         size=4,cluster_rows=T,fontsize=8)
+tumor$subcluster <- factor(tumor$subcluster, levels=c("Cycling Mes Cancer","Mes Cancer 1","pEMT Cancer","Cycling Epi Cancer","Epi Cancer 1"))
+bubbleplot(tumor,features_plot = c("Cebpb","Neurod2","Yap1","Runx2","Myod1","Kmt2b","Fosl2","Nr6a1","Junb","Med1"),cluster_y=F,color="Blues",grouping_var = "subcluster")
+bubbleplot(tumor,features_plot = c("Cebpb","Runx2","Arnt","Tead1","Xbp1"),cluster_y=T,color="Blues",grouping_var = "subcluster")
+```
+# Plot expression 
+```{r}
+avg.tumor <- AggregateExpression(tumor,return.seurat = T)
+tumor.matrix <- as.matrix(t(FetchData(avg.tumor, vars=c(bppnm_and_ppnm,"Il6"), layer="scale.data")))
+tumor.matrix <- tumor.matrix[, c("Cycling Epi Cancer","Epi Cancer 1","pEMT Cancer","Cycling Mes Cancer","Mes Cancer 1")]
+heatmap1 <- pheatmap(tumor.matrix,
+         color = colorRampPalette(c("navy", "white", "red"))(50),
+         cluster_cols=F,cluster_rows=T,fontsize=9)
+epi.markers <- c("Epcam","Cdh1","Krt8","Krt18","Krt19","Cldn3","Cldn4","Ocln")
+mes.markers <- c("Cdh2","Vim","Snai1","Snai2","Zeb1","Zeb2","Twist1","Twist2")
+epi.matrix <- as.matrix(t(FetchData(avg.tumor, vars=mes.markers, layer="scale.data")))
+epi.matrix <- epi.matrix[,c("Mes Cancer 1","Cycling Mes Cancer","pEMT Cancer","Epi Cancer 1","Cycling Epi Cancer")]
+heatmap1 <- pheatmap(epi.matrix,
+         color = colorRampPalette(c("navy", "white", "red"))(50),
+         cluster_cols=F,cluster_rows=T,fontsize=9,breaks=seq(-1.1,1.1,length.out=50))
+```
+```{r}
+# Plot all immune-related scRNA-seq DE genes
+mes.markers <- FindMarkers(tumor, ident.1=c("Mes Cancer 1","Cycling Mes Cancer"),ident.2=c("Epi Cancer 1", "Cycling Epi Cancer"),logfc.threshold=1, min.pct = 0.25)
+mouse_gene_sets = msigdbr(species = "Mus musculus")
+msigdbr_collections()
+mouse_hallmark = mouse_gene_sets %>% dplyr::filter(gs_collection == "H")
+immune_sets <- c('HALLMARK_COMPLEMENT', 'HALLMARK_IL2_STAT5_SIGNALING', 
+                 'HALLMARK_IL6_JAK_STAT3_SIGNALING', 'HALLMARK_INFLAMMATORY_RESPONSE', 
+                 'HALLMARK_INTERFERON_ALPHA_RESPONSE', 'HALLMARK_INTERFERON_GAMMA_RESPONSE', 
+                 'HALLMARK_TGF_BETA_SIGNALING', 'HALLMARK_TNFA_SIGNALING_VIA_NFKB')
+mouse_himmune <- mouse_hallmark[mouse_hallmark$gs_name %in% immune_sets, ]
+mes.immune <- mes.markers[rownames(mes.markers) %in% mouse_himmune$gene_symbol,]
+tumor.matrix <- as.matrix(t(FetchData(avg.tumor, vars=c(rownames(mes.immune),"Il6"), layer="scale.data")))
+tumor.matrix <- tumor.matrix[, c("Cycling Epi Cancer","Epi Cancer 1","pEMT Cancer","Cycling Mes Cancer","Mes Cancer 1")]
+heatmap1 <- pheatmap(tumor.matrix,
+         color = colorRampPalette(c("navy", "white", "red"))(50),
+         cluster_cols=F,cluster_rows=T,fontsize=8)
+write.table(mes.immune,file.path(dir,"Analysis/mes_v_epi_immune_DEGs.txt"),sep="\t",quote=F,row.names = T)
+```
+
+
+6. Get mean regulon expression
+```{r}
+dir2 <- "~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_10xFlex_Pilot2"
+tumor.module <- tumor
+regulons = read.table(file.path(dir2,"Analysis/top_regulons.csv"),header=T,sep="\t",row.names=NULL)
+n_regulons = dim(regulons)[1]
+genes = as.vector(unlist(regulons[1]))
+for (i in 1:n_regulons){
+  targets = strsplit(gsub('^.|.$', '', regulons[i,"Regulon"]),split=", ")
+  # Calculate average expression per gene
+  tumor.module = AddModuleScore(tumor.module, features=targets,ctrl=10,name=genes[i],seed=10)
+}
+cebpb_targets = strsplit(gsub('^.|.$', '', regulons[3,"Regulon"]),split=", ")
+arnt_targets = strsplit(gsub('^.|.$', '', regulons[10,"Regulon"]),split=", ")
+xbp1_targets = strsplit(gsub('^.|.$', '', regulons[9,"Regulon"]),split=", ")
+```
+```{r}
+# Turn ModuleScore for each regulon into an assay
+colnames(tumor.module@meta.data)[c(19:37)] = genes
+regulators <- colnames(tumor.module@meta.data)[c(19:37)]
+regulon_df <- t(as.data.frame(tumor.module@meta.data[regulators]))
+rownames(regulon_df) <- genes
+regulon_assay <- CreateAssayObject(counts=regulon_df)
+tumor.module[["regulon"]] <- regulon_assay
+head(tumor.module)
+```
+```{r}
+lisa.genes <- c("Runx2","Kmt2b","Cebpb","Myod1","Nr3c1","Tbp",'Pbx1')
+# Average expression of regulons
+avg_module <- AverageExpression(tumor.module, assays="regulon",return.seurat = T)
+tf.regulon <- as.data.frame(t(FetchData(avg_module, vars=lisa.genes, layer="counts")))
+pheatmap(tf.regulon,
+         color = colorRampPalette(c("navy","white", "red"))(50),
+         size=4,cluster_rows=T,fontsize=8)
+```
+11. Calculate regulon scores for tumor cells 
+```{r}
+# Export count matrix for SCENIC
+counts <- as.data.frame(LayerData(bppnm.multi, assay = "RNA", layer = "counts"))
+write.table(counts,file.path(dir2,"Analysis/counts_SCENIC.csv"),sep=",")
+```
+```{r}
+tumorcounts <- as.data.frame(LayerData(tumor, assay = "RNA", layer = "counts"))
+write.table(tumorcounts,file.path(dir2,"Analysis/tumor_counts_SCENIC.csv"),sep="\t")
+```
+
+```{r}
+# Load TF count matrix into Seurat object
+auc_mtx <- as.sparse(t(read.table(file.path(dir2,"pySCENIC/data/AUC_mtx.csv"), sep="\t",header=T,row.names=1)))
+auc_assay <- CreateAssay5Object(data = auc_mtx)
+bppnm.multi[["TF.AUC"]] <- auc_assay
+```
+```{r}
+# Run UMAP on TF.AUC assay
+DefaultAssay(bppnm.multi) <- "TF.AUC"
+features <- rownames(bppnm.multi)
+bppnm.multi <- NormalizeData(bppnm.multi, normalization.method = "CLR")
+bppnm.multi <- RunUMAP(bppnm.multi, reduction.key="UMAPtf_",n.neighbors=20L,features=features)
+DimPlot(bppnm.multi,label=T,repel=T)+NoLegend()
+```
+
+```{r}
+# Regulon scores
+# Plot regulon activity
+tumor <- subset(bppnm.multi,idents=c("Epi Cancer","Mes Cancer","Cycling Cancer"))
+rownames()
+avg.tumor <- AggregateExpression(tumor, return.seurat = TRUE)
+tumor.matrix <- as.data.frame(avg.tumor@assays$TF.AUC@scale.data)
+#tumor.matrix <- as.data.frame(t(FetchData(avg.tumor, vars=bppnm_and_ppnm, layer="scale.data")))
+pheatmap(tumor.matrix[rownames(tumor.matrix) %in% c(mes,epi),],
+         color = colorRampPalette(c("navy", "white", "red"))(50),
+         size=4,cluster_rows=T,fontsize=8)
+
+# Identify and plot top 20 TF regulons for each tumor cell state
+tumor <- subset(bppnm.multi,idents=c("Epi Cancer","Mes Cancer","Cycling Cancer"))
+avg.regulon <- as.data.frame(AverageExpression(object = tumor)$TF.AUC)
+avg.tumor <- AverageExpression(object = tumor,return.seurat = T)
+top_regulons <- c()
+for ( i in c("Epi Cancer","Mes Cancer","Cycling Cancer")){
+  tfs <- rownames(avg.regulon[order(avg.regulon[[i]],decreasing=T),])[1:20]
+  top_regulons <- union(top_regulons,tfs)
+}
+
+# Scale data and plot
+tumor.matrix <- as.data.frame(avg.tumor@assays$TF.AUC@scale.data)
+heatmap1 <- pheatmap(tumor.matrix[rownames(tumor.matrix) %in% top_regulons,],
+         color = colorRampPalette(c("navy", "white", "red"))(50),
+         size=4,cluster_rows=T,fontsize=8)
+
+```
+
