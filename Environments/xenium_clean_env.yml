@@ -1,0 +1,16 @@
+name: python3.10
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - scikit-learn
+  - python-igraph
+  - leidenalg
+  - scanpy
+  - jupyterlab
+  - scikit-image
+  - ipywidgets
+  - jupyter
+  - harmonypy
