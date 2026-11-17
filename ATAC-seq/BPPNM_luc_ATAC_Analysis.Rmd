@@ -248,20 +248,3 @@ plot_averageLFC <- function(peaks){
 plot_averageLFC(il6_peaks)
 ```
 
-6. Next steps: HOMER analysis, Heatmaps
-```{r}
-library(httr)
-library(jsonlite)
-library(xml2)
- 
-server <- "https://rest.ensembl.org"
-ext <- "/sequence/region/human/X:1000000..1000100:1?"
- 
-r <- GET(paste(server, ext, sep = ""), content_type("text/plain"))
- 
-stop_for_status(r)
- 
- 
-print(content(r))
-```
-

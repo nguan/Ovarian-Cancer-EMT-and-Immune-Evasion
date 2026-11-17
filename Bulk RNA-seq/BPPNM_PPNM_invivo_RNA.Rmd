@@ -245,7 +245,7 @@ il2_ppnm <- PPNM_EMT[rownames(PPNM_EMT) %in% il2$gene_symbol, ]
 ```
 
 ```{r}
-# Average over replicates
+# Get the subset of immune-related DEGs
 emt = mouse_hallmark %>% dplyr::filter(gs_name=="HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION")
 immune_sets <- c('HALLMARK_COMPLEMENT', 'HALLMARK_IL2_STAT5_SIGNALING', 
                  'HALLMARK_IL6_JAK_STAT3_SIGNALING', 'HALLMARK_INFLAMMATORY_RESPONSE', 
@@ -261,13 +261,6 @@ emt_bppnm_immune <- emt_bppnm[rownames(emt_bppnm) %in% mouse_himmune$gene_symbol
 
 ```{r}
 write.table(emt_bppnm_immune, file=file.path(dir, "Analysis/emt_bppnm.txt"), sep="\t")
-```
-```{r}
-sm_immune_genes <- read.table(file.path(dir, "Analysis/Surface_Secreted_immune_Genes.csv"))$V1
-# Which Membrane-secreted proteins are immune related?
-membrane_secreted_immune <- intersect(rownames(BPPNM_ms),mouse_himmune$gene_symbol)
-select_genes <- avg_expression[match(sm_immune_genes, rownames(avg_expression)),] %>% drop_na()
-pheatmap(select_genes, color = colorRampPalette(c("blue", "white", "red"))(50))
 ```
 
 6. KEGG analysis 
@@ -313,24 +306,13 @@ write.table(ppnm_kegg,file.path(dir,"Analysis/bppnm_kegg.txt"),sep="\t",row.name
 
 8. Transcriptional regulators and membrane/secreted proteins
 ```{r}
-# Epigenetic regulators
+# Epigenetic regulators and TFs (human symbols)
 dir2 <- "~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_PPNM_invivo_RNAseq"
 epigenetic <- read.table(file.path(dir2,"Databases/genes.csv"), sep=",", header = T)
 epigenes <- gsub("\\\t.*","", epigenetic$HGNC.approved.symbol.HGNC.approved.name.UniProt.ID..human..Pfam.domains.UniProt.ID..mouse..Function.Modification.Protein.complex.Target.entity.Product)
 tfs <- read_excel(file.path(dir2,"Databases/EMS118413-supplement-Supplementary_Table_1.xlsx"))
 tfs <- tfs$`Supplementary Table 1: TFs in the Human Tfome`
 epi_factors <- union(epigenes, tfs)
-```
-
-```{r}
-# Transmembrane proteins
-cellular <- mouse_gene_sets %>% dplyr::filter(gs_subcat == "GO:CC")
-plasma_membrane <- cellular[grep("PLASMA_MEMBRANE",cellular$gs_name),]
-membrane_genes <- unique(plasma_membrane$gene_symbol)
-membrane_expression <- avg_expression[match(membrane_genes, rownames(avg_expression)),] %>% drop_na()
-membrane_deg <- intersect(union(rownames(BPPNM_EMT),rownames(PPNM_EMT)),membrane_genes)
-#gsea_top10 <- norm_genes[rownames(norm_genes) %in% genes,]
-pheatmap(gsea_top10, cluster_rows = F, gaps_row=c(10,20,30,40,50),color = colorRampPalette(c("blue", "white", "red"))(50))
 ```
 
 ```{r}
@@ -342,10 +324,7 @@ matchMMUsymbol<-function(human_symbol){
 	mouse<-map_sor$mmu_symbol
 	return(mouse)
 }
-```
-
-```{r}
-# Human epigenetic factors, secreted and membrane proteins
+# Human epigenetic factors, secreted and membrane proteins -> mouse symbols
 epi_mouse <- matchMMUsymbol(epi_factors)
 secreted <- read.table(file.path(dir, "Databases/protein_class_Predicted_secreted.tsv"),sep="\t",header=T)
 secreted_mouse <- matchMMUsymbol(secreted$Gene)
@@ -354,31 +333,24 @@ membrane_mouse <- matchMMUsymbol(membrane$Gene)
 ```
 
 ```{r}
-# Make datasets of epigenetic, secreted and membrane proteins. BPPNM and PPNM EMT
-epi_BPPNM <- BPPNM_EMT[rownames(BPPNM_EMT) %in% epi_mouse,]
-secreted_BPPNM <- BPPNM_EMT[rownames(BPPNM_EMT) %in% secreted_mouse,]
-membrane_BPPNM <- BPPNM_EMT[rownames(BPPNM_EMT) %in% membrane_mouse,]
-epi_PPNM <- PPNM_EMT[rownames(PPNM_EMT) %in% epi_mouse,]
-secreted_PPNM <- PPNM_EMT[rownames(PPNM_EMT) %in% secreted_mouse,]
-membrane_PPNM <- PPNM_EMT[rownames(PPNM_EMT) %in% membrane_mouse,]
-deseq_subsets <- list("EpigeneticTF_BPPNM"=epi_BPPNM,"Membrane_BPPNM"=membrane_BPPNM, "Secreted_BPPNM"=secreted_BPPNM, "EpigeneticTF_PPNM"=epi_PPNM,"Membrane_PPNM"=membrane_PPNM, "Secreted_PPNM"=secreted_PPNM)
+# Subset BPPNM and PPNM Mes-vs-Epi DEGs to each gene list -> one sheet per "<list>_<genotype>"
+subset_degs <- function(gene_sets) {
+  out <- list()
+  for (g in c("BPPNM", "PPNM")) {
+    de <- list(BPPNM = BPPNM_EMT, PPNM = PPNM_EMT)[[g]]
+    for (s in names(gene_sets)) out[[paste(s, g, sep = "_")]] <- de[rownames(de) %in% gene_sets[[s]], ]
+  }
+  out
+}
+deseq_subsets <- subset_degs(list(EpigeneticTF = epi_mouse, Membrane = membrane_mouse, Secreted = secreted_mouse,
+                                  Membrane_Secreted = union(membrane_mouse, secreted_mouse)))
 write.xlsx(deseq_subsets,file.path(dir,"Analysis/DE_gene_subsets.xlsx"),rowNames=T)
 ```
 
 ```{r}
-# Examine KRAS pathway differences in BPPNM vs. PPNM
-kras <- mouse_hallmark[mouse_hallmark$gs_name == "HALLMARK_KRAS_SIGNALING_DN",]
-mes_kras <- Genotype_Mes[rownames(Genotype_Mes) %in% kras$gene_symbol,]
-epi_kras <- Genotype_Epi[rownames(Genotype_Epi) %in% kras$gene_symbol,]
-kras_genes <- union(rownames(mes_kras),rownames(epi_kras))
-
-```
-
-```{r}
+# CellChat ligands and receptors
 interaction <- CellChatDB.mouse$interaction
 write.table(interaction,file=file.path(dir,"Analysis/CellChatDB_interaction.txt"),sep="\t",row.names=F)
-ppi.genes <- rownames(PPI.mouse)
-# Get ligands and receptors
 ligands = unique(interaction$ligand)
 receptor <- gsub(".*\\- ", "", interaction$interaction_name_2)
 complex <- gsub("\\).*", "", gsub(".*\\(", "", receptor))
@@ -388,64 +360,31 @@ proteins <- union(ligands,receptors)
 # Save proteins and ligands
 CellChat_sets <- list("Ligands"=ligands,"Receptors"=receptors,"Combined"=proteins)
 write.xlsx(CellChat_sets,file=file.path(dir,"Analysis/CellChat_sets.xlsx"))
-```
-
-```{r}
-# Make datasets of epigenetic, secreted and membrane proteins. BPPNM and PPNM EMT
-ligand_BPPNM <- BPPNM_EMT[rownames(BPPNM_EMT) %in% ligands,]
-receptor_BPPNM <- BPPNM_EMT[rownames(BPPNM_EMT) %in% receptors,]
-combined_BPPNM <- BPPNM_EMT[rownames(BPPNM_EMT) %in% proteins,]
-ligand_PPNM <- PPNM_EMT[rownames(PPNM_EMT) %in% ligands,]
-receptor_PPNM <- PPNM_EMT[rownames(PPNM_EMT) %in% receptor,]
-combined_PPNM <- PPNM_EMT[rownames(PPNM_EMT) %in% proteins,]
-deseq_cellchat <- list("Ligand_BPPNM"=ligand_BPPNM,"Receptor_BPPNM"=receptor_BPPNM, "Ligand_Receptor_BPPNM"=combined_BPPNM, "Ligand_PPNM"=ligand_PPNM,"Receptor_PPNM"=receptor_PPNM, "Ligand_Receptor_PPNM"=combined_PPNM)
+# DE ligands / receptors, BPPNM and PPNM EMT
+deseq_cellchat <- subset_degs(list(Ligand = ligands, Receptor = receptors, Ligand_Receptor = proteins))
 write.xlsx(deseq_cellchat,file.path(dir,"Analysis/DE_gene_CellChat.xlsx"),rowNames=T)
 ```
 
 ```{r}
-# Get BaseMean reference
-BPPNM_Mes_Epi <- read.table(file.path(dir,"DEseq2","BPPNM_Mes_vs_BPPNM_Epi.deseq2_output.tsv"))
-summary(BPPNM_Mes_Epi)
-```
-```{r}
-# Identify epigenetic, membrane/secreted proteins with immune annotations
-mouse_himmune <- mouse_hallmark[mouse_hallmark$gs_name %in% immune_sets, ]
-immune <- function(sheetn){
-  epi_BPPNM <- read.xlsx(file.path(dir, "Analysis/DE_gene_CellChat.xlsx"), sheet=sheetn, rowNames=T)
-  epi_immune <- epi_BPPNM[rownames(epi_BPPNM) %in% mouse_himmune$gene_symbol,]
-  return(epi_immune)
-}
-epi_Bimmune <- immune("EpigeneticTF_BPPNM")
-epi_Pimmune <- immune("EpigeneticTF_PPNM")
-ligand_Bimmune <- immune("Ligand_BPPNM")
-ligand_Pimmune <- immune("Ligand_PPNM")
-receptor_Bimmune <- immune("Receptor_BPPNM")
-receptor_Pimmune <- immune("Receptor_PPNM")
-deseq_immunesets <- list("Ligand_BPPNM"=ligand_Bimmune,"Receptor_BPPNM"=receptor_Bimmune, "Epigenetic_TF_BPPNM"=epi_Bimmune, "Ligand_PPNM"=ligand_Pimmune,"Receptor_PPNM"=receptor_Pimmune, "Epigenetic_TF_PPNM"=epi_Pimmune)
+# Identify DE ligands, receptors and epigenetic factors/TFs in the immune Hallmark sets (mouse_himmune)
+keep_immune <- function(x) x[rownames(x) %in% mouse_himmune$gene_symbol, ]
+deseq_immunesets <- lapply(list(
+  "Ligand_BPPNM" = deseq_cellchat$Ligand_BPPNM, "Receptor_BPPNM" = deseq_cellchat$Receptor_BPPNM,
+  "Epigenetic_TF_BPPNM" = deseq_subsets$EpigeneticTF_BPPNM,
+  "Ligand_PPNM" = deseq_cellchat$Ligand_PPNM, "Receptor_PPNM" = deseq_cellchat$Receptor_PPNM,
+  "Epigenetic_TF_PPNM" = deseq_subsets$EpigeneticTF_PPNM), keep_immune)
 write.xlsx(deseq_immunesets,file.path(dir,"Analysis/DE_subsets_immune.xlsx"),rowNames=T)
-
-# Gene sets
-ligands <- union(rownames(ligand_Bimmune), rownames(ligand_Pimmune))
-receptor <- union(rownames(receptor_Bimmune), rownames(receptor_Pimmune))
-epigenetic <- union(rownames(epi_Bimmune), rownames(epi_Pimmune))
-# Make heatmaps
-select_genes <- avg_expression[match(epigenetic, rownames(avg_expression)),] %>% drop_na()
+# Heatmap of immune-related epigenetic factors/TFs DE in BPPNM or PPNM
+epi_immune_genes <- union(rownames(deseq_immunesets$Epigenetic_TF_BPPNM), rownames(deseq_immunesets$Epigenetic_TF_PPNM))
+select_genes <- avg_expression[match(epi_immune_genes, rownames(avg_expression)),] %>% drop_na()
 pheatmap(select_genes, cluster_cols=F, color = colorRampPalette(c("blue", "white", "red"))(50))
 ```
 
-```{r}
-membrane_bppnm <- read.xlsx(file.path(dir,"Analysis/DE_gene_subsets.xlsx"),sheet="Membrane_BPPNM",rowNames=T)
-secreted_bppnm <- read.xlsx(file.path(dir,"Analysis/DE_gene_subsets.xlsx"),sheet="Secreted_BPPNM",rowNames=T)
-comb <- rbind(membrane_bppnm,secreted_bppnm)
-comb <- comb[order(comb$log2FoldChange),]
-write.table(comb, file.path(dir,"Analysis/DE_ppnm.txt"),sep="\t",row.names=T)
-```
 Get mean values for significant interesting genes
 ```{r}
-dir <- "~/Dropbox (Partners HealthCare)/BPPNM RNA-seq/results"
-Ctrl_EMT <- read.table(file.path(dir,"DEseq2","Eplow_Ctrl_vs_Ephigh_Ctrl.deseq2_output.tsv"))
-IFNg_EMT <- read.table(file.path(dir,"DEseq2","Eplow_IFNg_vs_Eplow_ctrl.deseq2_output.tsv"))
-mean = mean(Ctrl_EMT$baseMean)
+dir_invitro <- "~/Dropbox (Partners HealthCare)/BPPNM RNA-seq/results"
+Ctrl_EMT <- read.table(file.path(dir_invitro,"DEseq2","Eplow_Ctrl_vs_Ephigh_Ctrl.deseq2_output.tsv"))
+IFNg_EMT <- read.table(file.path(dir_invitro,"DEseq2","Eplow_IFNg_vs_Eplow_ctrl.deseq2_output.tsv"))
 genes = c("Il6", "Il6st","Il6ra","Nt5e","Axl")
 select_ctrl <- Ctrl_EMT[rownames(Ctrl_EMT) %in% genes,]
 select_IFNg <- IFNg_EMT[rownames(IFNg_EMT) %in% genes,]
@@ -453,27 +392,26 @@ select_IFNg
 ```
 9. Examine surface/secreted proteins
 ```{r}
-BPPNM_ms <- read.xlsx(file.path(dir,"Analysis/DE_gene_subsets.xlsx"),sheet="Membrane_Secreted_BPPNM", rowNames=T)
-PPNM_ms <- read.xlsx(file.path(dir,"Analysis/DE_gene_subsets.xlsx"),sheet="Membrane_Secreted_PPNM",rowNames=T)
-# filter by baseMean
-BPPNM_EMT_all <- read.table(file.path(dir,"DEseq2","BPPNM_Mes_vs_BPPNM_Epi.deseq2_output.tsv"))
-cutoff = quantile(BPPNM_EMT_all$baseMean, probs=0.25)
-BPPNM_ms <- BPPNM_ms[BPPNM_ms$baseMean >= cutoff,] # Conservative cutoff 
-PPNM_ms <- PPNM_ms[PPNM_ms$baseMean >= cutoff,]
+BPPNM_ms <- deseq_subsets$Membrane_Secreted_BPPNM
+PPNM_ms <- deseq_subsets$Membrane_Secreted_PPNM
+write.table(BPPNM_ms[order(BPPNM_ms$log2FoldChange),], file.path(dir,"Analysis/DE_ppnm.txt"),sep="\t",row.names=T)
+# Which Membrane-secreted proteins are immune related?
+membrane_secreted_immune <- intersect(rownames(BPPNM_ms),mouse_himmune$gene_symbol)
 ```
 ```{r}
-# Select genes also DE in vitro
-BPPNM_invivo <- BPPNM_ms[!(rownames(BPPNM_ms) %in% union(rownames(emt_Ctrl),rownames(emt_IFNg))),]
-PPNM_invivo <- PPNM_ms[!(rownames(PPNM_ms) %in% union(rownames(emt_Ctrl),rownames(emt_IFNg))),]
-deseq_comparesets <- list("BPPNM_invivo"=BPPNM_invivo,"PPNM_invivo"=PPNM_invivo, "BPPNM_both"=BPPNM_both, "PPNM_both"=PPNM_both)
-write.xlsx(deseq_comparesets,file.path(dir,"Analysis/DE_invivo_invitro.xlsx"),rowNames=T)
+# Heatmap of curated surface/secreted immune genes (saved list, Jan 2026; mostly a subset of membrane_secreted_immune)
+sm_immune_genes <- read.table(file.path(dir, "Analysis/Surface_Secreted_Immune_Genes.csv"), fileEncoding = "UTF-8-BOM")$V1
+select_genes <- avg_expression[match(sm_immune_genes, rownames(avg_expression)),] %>% drop_na()
+pheatmap(select_genes, color = colorRampPalette(c("blue", "white", "red"))(50))
 ```
 ```{r}
-dir1 <- "~/Partners HealthCare Dropbox/Ning Guan/Lab Work- Alexa Mitchell/RNA_seq/BPPNM_PPNM_invivo_RNAseq"
-BPPNM_immune <- read.xlsx(file.path(dir1,"Analysis/DE_invivo_bulk_vs_scRNA_Lyer_immune.xlsx"),colNames=T,sheet="BPPNM_immune")
-colnames(BPPNM_immune)[1] <- "gene"
-PPNM_immune <- read.xlsx(file.path(dir1,"Analysis/DE_invivo_bulk_vs_scRNA_Lyer_immune.xlsx"),colNames=F,sheet="PPNM_immune")
-colnames(PPNM_immune)[1] <- "gene"
+read_immune <- function(sheet) {
+  x <- read.xlsx(file.path(dir2,"Analysis/DE_invivo_bulk_vs_scRNA_Lyer_immune.xlsx"),colNames=T,sheet=sheet)
+  colnames(x)[1] <- "gene"
+  x
+}
+BPPNM_immune <- read_immune("BPPNM_immune")
+PPNM_immune <- read_immune("PPNM_immune")
 bppnm_or_ppnm <- union(BPPNM_immune$gene, PPNM_immune$gene)
 bppnm_and_ppnm <- intersect(BPPNM_immune$gene, PPNM_immune$gene)
 crispr_gene_list <- c("Snai1","Snai2","Zeb1","Zeb1","Twist1","Twist2","Tnfrsf1a","Cebpb","Runx2","Arnt","Tead1","Xbp1",bppnm_and_ppnm)
@@ -481,51 +419,29 @@ write.table(crispr_gene_list,file="~/Dropbox (Partners Healthcare)/Lab Work- Ale
             quote=F,row.names = F,col.names = F)
 ```
 ```{r}
-stic_nfte <- read.xlsx(file.path(dir,"Databases/Wang2023_NIHMS1843001-supplement-3.xlsx"),sheet="Sheet1", rowNames=T,startRow=3,cols=c(1:4))
-stic_hgsc <- read.xlsx(file.path(dir,"Databases/Wang2023_NIHMS1843001-supplement-3.xlsx"),sheet="Sheet1", rowNames=T,startRow=3,cols=c(6:9))
+# Compare immune DEGs with human HGSC vs. normal FTE (Wang 2023)
 hgsc_nfte <- read.xlsx(file.path(dir,"Databases/Wang2023_NIHMS1843001-supplement-3.xlsx"),sheet="Sheet1", rowNames=T,startRow=3,cols=c(11:14))
-```
-
-```{r}
-# human to mouse
+colnames(hgsc_nfte) <- c("human.t.statist","human.L2FC","human.p.value")
+# mouse Ensembl ID -> human ortholog symbol
 fun <- function(gns){
     egs <- mapIds(org.Mm.eg.db, gns, "ENTREZID","ENSEMBL")
-    mapped <- select(Orthology.eg.db, egs, "Homo.sapiens","Mus.musculus")
+    mapped <- AnnotationDbi::select(Orthology.eg.db, egs, "Homo.sapiens","Mus.musculus")
     mapped$HS <- mapIds(org.Hs.eg.db, as.character(mapped$Homo.sapiens), "SYMBOL", "ENTREZID")
     mapped <- mapped[!is.na(mapped$Homo.sapiens) & !duplicated(mapped$HS),]
     return(mapped)
 }
-gene_df <- fun(PPNM_immune$Row.names)
-PPNM_genes <- merge(PPNM_immune,gene_df["HS"], by.x="Row.names" ,by.y=0)
-# Do column to rownames and remove ENSEMBL column
-colnames(hgsc_nfte) <- c("human.t.statist","human.L2FC","human.p.value")
-PPNM_genes$HS <- unlist(PPNM_genes$HS)
-PPNM_genes <- merge(PPNM_genes,hgsc_nfte, by.x="HS",by.y=0, all=F)
-PPNM_genes <- PPNM_genes %>%  remove_rownames() %>% column_to_rownames("Var.2")
-PPNM_genes <- PPNM_genes[order(-PPNM_genes$human.t.statist),]
-```
-```{r}
+add_human <- function(immune) {
+  gene_df <- fun(immune$Row.names)
+  x <- merge(immune, gene_df["HS"], by.x="Row.names", by.y=0)
+  x$HS <- unlist(x$HS)
+  x <- merge(x, hgsc_nfte, by.x="HS", by.y=0, all=F)
+  x <- x %>% remove_rownames() %>% column_to_rownames("gene")
+  x[order(-x$human.t.statist),]
+}
+BPPNM_genes <- add_human(BPPNM_immune)
+PPNM_genes <- add_human(PPNM_immune)
 invivo_immune_vs_human <- list("BPPNM_immune_human_HGOC_Normal"=BPPNM_genes,"PPNM_immune_human_HGOC_Normal"=PPNM_genes)
 write.xlsx(invivo_immune_vs_human, file.path(dir,"Analysis/invivo_immune_vs_human.xlsx"),rowNames=T)
-```
-```{r}
-gene_df <- fun(BPPNM_immune$Row.names)
-BPPNM_genes <- merge(BPPNM_immune,gene_df["HS"], by.x="Row.names" ,by.y=0)
-BPPNM_genes <- BPPNM_genes %>%  remove_rownames() %>% column_to_rownames("Var.2")
-BPPNM_genes <- BPPNM_genes[order(BPPNM_genes$log2FoldChange),]
-PPNM_genes <- PPNM_genes[order(PPNM_genes$log2FoldChange),]
-```
-```{r}
-BPPNM_ligand <- read.xlsx(file.path(dir,"Analysis/DE_subsets_immune.xlsx"),colNames=T,sheet="Ligand_BPPNM")
-BPPNM_receptor <- read.xlsx(file.path(dir,"Analysis/DE_subsets_immune.xlsx"),colNames=T,sheet="Receptor_BPPNM")
-PPNM_ligand <- read.xlsx(file.path(dir,"Analysis/DE_subsets_immune.xlsx"),colNames=T,sheet="Ligand_PPNM")
-PPNM_receptor <- read.xlsx(file.path(dir,"Analysis/DE_subsets_immune.xlsx"),colNames=T,sheet="Receptor_PPNM")
-BPPNM_genes <- read.xlsx(file.path(dir,"Analysis/invivo_immune_vs_human.xlsx"),colNames=T,sheet="BPPNM_immune_human_HGOC_Normal")
-PPNM_genes <- read.xlsx(file.path(dir,"Analysis/invivo_immune_vs_human.xlsx"),colNames=T,sheet="PPNM_immune_human_HGOC_Normal")
-colnames(BPPNM_genes)[1] <- "gene"
-colnames(PPNM_genes)[1] <- "gene"
-bppnm_or_ppnm <- union(BPPNM_genes$gene, PPNM_genes$gene)
-bppnm_and_ppnm <- intersect(BPPNM_immune$gene, PPNM_immune$gene)
 ```
 List of immune-related genes
 ```{r}
